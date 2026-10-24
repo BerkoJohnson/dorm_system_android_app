@@ -42,6 +42,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -83,13 +84,14 @@ fun StudentDirectoryScreen(
         OutlinedTextField(
             value = searchQuery,
             onValueChange = { searchQuery = it },
-            label = { Text("Search Students by name, index, form...") },
+            label = { Text("Search students") },
+            placeholder = { Text("Name, index or form") },
             leadingIcon = {
                 Icon(imageVector = Icons.Default.Search, contentDescription = null, tint = NavyPrimary)
             },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(10.dp)
+            shape = RoundedCornerShape(14.dp)
         )
 
         Spacer(modifier = Modifier.height(10.dp))
@@ -108,7 +110,7 @@ fun StudentDirectoryScreen(
                         color = if (isSelected) Color.White else Color(0xFF475569),
                         fontSize = 12.sp,
                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp)
                     )
                 }
             }
@@ -125,7 +127,7 @@ fun StudentDirectoryScreen(
                         color = if (isSelected) Color.White else Color(0xFF475569),
                         fontSize = 12.sp,
                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp)
                     )
                 }
             }
@@ -134,11 +136,9 @@ fun StudentDirectoryScreen(
         Spacer(modifier = Modifier.height(14.dp))
 
         Text(
-            text = "ENROLLED BOARDERS (${filtered.size})",
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 1.sp,
-            color = Color(0xFF64748B)
+            text = "Enrolled boarders (${filtered.size})",
+            style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
+            color = NavyPrimary
         )
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -166,7 +166,12 @@ fun StudentDirectoryScreen(
                     StudentRowItem(
                         student = student,
                         houseName = house?.name ?: "House",
-                        onClick = { viewingStudentIdCard = student }
+                        onClick = {
+                            viewingStudentIdCard = student
+                            viewModel.loadStudentDetail(student) {
+                                if (viewingStudentIdCard?.id == student.id) viewingStudentIdCard = it
+                            }
+                        }
                     )
                 }
             }
@@ -218,7 +223,7 @@ private fun StudentRowItem(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onClick() },
-        shape = RoundedCornerShape(10.dp),
+        shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
@@ -226,10 +231,12 @@ private fun StudentRowItem(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            modifier = Modifier.weight(1f),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
                 val initials = student.fullName.split(" ")
                     .mapNotNull { it.firstOrNull()?.toString() }
                     .take(2)
@@ -251,17 +258,30 @@ private fun StudentRowItem(
 
                 Spacer(modifier = Modifier.width(12.dp))
 
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = student.fullName,
                         fontWeight = FontWeight.Bold,
                         fontSize = 14.sp,
-                        color = NavyPrimary
+                        color = NavyPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        text = "${student.studentId} • ${student.classForm} • $houseName",
-                        fontSize = 11.sp,
-                        color = Color(0xFF64748B)
+                        text = student.studentId,
+                        fontSize = 12.sp,
+                        color = Color(0xFF64748B),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = listOf(student.classForm, houseName)
+                            .filter(String::isNotBlank)
+                            .joinToString(" · "),
+                        fontSize = 12.sp,
+                        color = Color(0xFF475569),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
@@ -281,7 +301,7 @@ private fun StudentRowItem(
                     Text(
                         text = student.status.replace("_", " "),
                         color = statusFg,
-                        fontSize = 10.sp,
+                        fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                     )
@@ -291,7 +311,7 @@ private fun StudentRowItem(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(imageVector = Icons.Default.Badge, contentDescription = null, tint = GoldAccent, modifier = Modifier.size(12.dp))
                     Spacer(modifier = Modifier.width(3.dp))
-                    Text(text = "View ID Card", fontSize = 10.sp, color = NavyPrimary, fontWeight = FontWeight.Bold)
+                    Text(text = "View ID Card", fontSize = 11.sp, color = NavyPrimary, fontWeight = FontWeight.Bold)
                 }
             }
         }

@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -48,6 +49,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -69,10 +71,11 @@ fun RollCallScreen(
     val allStudents by viewModel.students.collectAsStateWithLifecycle()
     val selectedHouseId by viewModel.selectedHouseId.collectAsStateWithLifecycle()
 
-    var selectedRoomId by remember { mutableStateOf<String?>("R_AGG_101") }
+    var selectedRoomId by remember { mutableStateOf<String?>(null) }
     var sessionType by remember { mutableStateOf("EVENING_ROLL_CALL") }
     var showConfirmDialog by remember { mutableStateOf(false) }
     var submittedMessage by remember { mutableStateOf<String?>(null) }
+    var submitFailed by remember { mutableStateOf(false) }
 
     // Dropdown expansion states
     var houseMenuExpanded by remember { mutableStateOf(false) }
@@ -82,8 +85,7 @@ fun RollCallScreen(
     val houseRooms = rooms.filter { it.houseId == selectedHouseId }
     val currentRoom = rooms.find { it.id == selectedRoomId } ?: houseRooms.firstOrNull()
     val currentHouse = houses.find { it.id == selectedHouseId } ?: houses.firstOrNull()
-
-    // Filter students for current room
+    // The mobile API creates roll-call sessions by dormitory, not individual room.
     val roomStudents = allStudents.filter { it.roomId == currentRoom?.id }
 
     // Map of studentId -> status (PRESENT, ABSENT, ON_EXEAT, SICK_BAY)
@@ -93,12 +95,7 @@ fun RollCallScreen(
     LaunchedEffect(roomStudents) {
         statusMap.clear()
         roomStudents.forEach { student ->
-            statusMap[student.id] = when (student.status) {
-                "ON_EXEAT" -> "ON_EXEAT"
-                "SICK_BAY" -> "SICK_BAY"
-                "ABSENT" -> "ABSENT"
-                else -> "PRESENT"
-            }
+            statusMap[student.id] = if (student.status == "ON_EXEAT") "ON_EXEAT" else "UNMARKED"
         }
     }
 
@@ -112,7 +109,7 @@ fun RollCallScreen(
             .fillMaxSize()
             .padding(16.dp)
     ) {
-        // Room & House Selection Header
+        // Dormitory & House Selection Header
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(12.dp),
@@ -122,26 +119,30 @@ fun RollCallScreen(
             Column(modifier = Modifier.padding(14.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     // Session Selector
-                    Box {
+                    Box(modifier = Modifier.weight(1f)) {
                         Surface(
                             shape = RoundedCornerShape(8.dp),
                             color = NavyPrimary.copy(alpha = 0.08f),
-                            modifier = Modifier.clickable { sessionMenuExpanded = true }
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { sessionMenuExpanded = true }
                         ) {
                             Text(
                                 text = when (sessionType) {
-                                    "EVENING_ROLL_CALL" -> "🌙 Evening Roll Call"
-                                    "MORNING_INSPECTION" -> "☀️ Morning Inspection"
-                                    else -> "🔒 Curfew Check"
+                                    "EVENING_ROLL_CALL" -> "Evening Roll Call"
+                                    "MORNING_INSPECTION" -> "Morning Inspection"
+                                    else -> "Curfew Check"
                                 },
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = NavyPrimary,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp)
                             )
                         }
 
@@ -150,21 +151,21 @@ fun RollCallScreen(
                             onDismissRequest = { sessionMenuExpanded = false }
                         ) {
                             DropdownMenuItem(
-                                text = { Text("🌙 Evening Roll Call (Curfew)") },
+                                text = { Text("Evening Roll Call (Curfew)") },
                                 onClick = {
                                     sessionType = "EVENING_ROLL_CALL"
                                     sessionMenuExpanded = false
                                 }
                             )
                             DropdownMenuItem(
-                                text = { Text("☀️ Morning Inspection") },
+                                text = { Text("Morning Inspection") },
                                 onClick = {
                                     sessionType = "MORNING_INSPECTION"
                                     sessionMenuExpanded = false
                                 }
                             )
                             DropdownMenuItem(
-                                text = { Text("🔒 Emergency Roll Call") },
+                                text = { Text("Emergency Roll Call") },
                                 onClick = {
                                     sessionType = "CURFEW_CHECK"
                                     sessionMenuExpanded = false
@@ -174,18 +175,22 @@ fun RollCallScreen(
                     }
 
                     // House Selector
-                    Box {
+                    Box(modifier = Modifier.weight(1f)) {
                         Surface(
                             shape = RoundedCornerShape(8.dp),
                             color = GoldAccent.copy(alpha = 0.2f),
-                            modifier = Modifier.clickable { houseMenuExpanded = true }
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { houseMenuExpanded = true }
                         ) {
                             Text(
-                                text = "${currentHouse?.name ?: "Select House"} ▼",
+                                text = currentHouse?.name ?: "Select House",
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = Color(0xFF78350F),
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp)
                             )
                         }
 
@@ -209,16 +214,21 @@ fun RollCallScreen(
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                // Dorm Room Tabs/Selector
+                // Dormitory Selector
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Box {
+                    Box(modifier = Modifier.weight(1f)) {
                         OutlinedButton(
                             onClick = { roomMenuExpanded = true },
-                            shape = RoundedCornerShape(8.dp)
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                                horizontal = 8.dp,
+                                vertical = 8.dp
+                            )
                         ) {
                             Icon(
                                 imageVector = Icons.Default.MeetingRoom,
@@ -228,10 +238,12 @@ fun RollCallScreen(
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = currentRoom?.dormName ?: "Select Room",
+                                text = currentRoom?.dormName ?: "Select Dormitory",
                                 fontWeight = FontWeight.Bold,
                                 color = NavyPrimary,
-                                fontSize = 13.sp
+                                fontSize = 12.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(text = "▼", fontSize = 10.sp, color = Color.Gray)
@@ -264,7 +276,7 @@ fun RollCallScreen(
                         }
                     ) {
                         Text(
-                            text = "Mark All Present",
+                            text = "Mark all",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                             color = EmeraldGreen
@@ -279,48 +291,57 @@ fun RollCallScreen(
         // Summary Tally Strip
         Card(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(8.dp),
+            shape = RoundedCornerShape(12.dp),
             colors = CardDefaults.cardColors(containerColor = NavyPrimary)
         ) {
-            Row(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 14.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text(
-                    text = "${roomStudents.size} Beds Allocated",
+                    text = "${roomStudents.size} students in dormitory",
                     color = Color.White,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 12.sp
+                    fontSize = 13.sp
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     Text(
-                        text = "✓ $presentCount",
+                        text = "Present $presentCount",
                         color = Color(0xFF4ADE80),
                         fontWeight = FontWeight.Bold,
-                        fontSize = 12.sp
+                        fontSize = 12.sp,
+                        modifier = Modifier.weight(1f)
                     )
                     Text(
-                        text = "⚡ $exeatCount Exeat",
+                        text = "Exeat $exeatCount",
                         color = GoldAccent,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 12.sp
+                        fontSize = 12.sp,
+                        modifier = Modifier.weight(1f)
                     )
-                    if (sickCount > 0) {
-                        Text(
-                            text = "+ $sickCount Sick",
-                            color = Color(0xFFC084FC),
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 12.sp
-                        )
-                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     Text(
-                        text = "✗ $absentCount Absent",
+                        text = "Sick $sickCount",
+                        color = Color(0xFFC084FC),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        text = "Absent $absentCount",
                         color = Color(0xFFF87171),
                         fontWeight = FontWeight.Bold,
-                        fontSize = 12.sp
+                        fontSize = 12.sp,
+                        modifier = Modifier.weight(1f)
                     )
                 }
             }
@@ -330,12 +351,12 @@ fun RollCallScreen(
             Spacer(modifier = Modifier.height(8.dp))
             Surface(
                 shape = RoundedCornerShape(8.dp),
-                color = Color(0xFFDCFCE7),
+                color = if (submitFailed) Color(0xFFFEE2E2) else Color(0xFFDCFCE7),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
                     text = submittedMessage ?: "",
-                    color = EmeraldGreen,
+                    color = if (submitFailed) CrimsonAlert else EmeraldGreen,
                     fontWeight = FontWeight.Bold,
                     fontSize = 12.sp,
                     modifier = Modifier.padding(10.dp)
@@ -354,7 +375,7 @@ fun RollCallScreen(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "No students currently allocated to this room.",
+                    text = "No students currently assigned to this dormitory.",
                     color = Color.Gray,
                     fontSize = 13.sp
                 )
@@ -367,7 +388,7 @@ fun RollCallScreen(
                 items(roomStudents) { student ->
                     RollCallStudentCard(
                         student = student,
-                        currentStatus = statusMap[student.id] ?: "PRESENT",
+                        currentStatus = statusMap[student.id] ?: "UNMARKED",
                         onStatusChange = { newStatus ->
                             statusMap[student.id] = newStatus
                         }
@@ -383,10 +404,12 @@ fun RollCallScreen(
             onClick = { showConfirmDialog = true },
             modifier = Modifier
                 .fillMaxWidth()
-                .height(48.dp),
-            shape = RoundedCornerShape(8.dp),
+                .heightIn(min = 52.dp),
+            shape = RoundedCornerShape(12.dp),
             colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary),
-            enabled = roomStudents.isNotEmpty()
+            enabled = roomStudents.isNotEmpty() &&
+                statusMap.size == roomStudents.size &&
+                statusMap.values.none { it == "UNMARKED" }
         ) {
             Icon(
                 imageVector = Icons.Default.Lock,
@@ -442,16 +465,18 @@ fun RollCallScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        val namesMap = roomStudents.associate { it.id to it.fullName }
+                        submittedMessage = "Submitting roll call to the school server…"
+                        submitFailed = false
                         viewModel.submitRollCallSession(
-                            roomId = currentRoom?.id ?: "R_101",
+                            roomId = currentRoom?.id.orEmpty(),
                             sessionType = sessionType,
                             markedStatuses = statusMap.toMap(),
-                            studentNames = namesMap,
-                            housemasterName = currentHouse?.housemasterName ?: "Duty Housemaster"
+                            onResult = { result ->
+                                submittedMessage = result
+                                submitFailed = result.startsWith("Roll call was not submitted:")
+                            }
                         )
                         showConfirmDialog = false
-                        submittedMessage = "Official roll call locked and saved to local database. Change queued for school sync."
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary)
                 ) {
@@ -479,17 +504,16 @@ private fun RollCallStudentCard(
         colors = CardDefaults.cardColors(containerColor = Color.White),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             // Bed Number & Student Info
             Row(
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.weight(1f)
             ) {
                 Box(
                     modifier = Modifier
@@ -508,12 +532,14 @@ private fun RollCallStudentCard(
 
                 Spacer(modifier = Modifier.width(10.dp))
 
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = student.fullName,
                         fontWeight = FontWeight.Bold,
                         fontSize = 14.sp,
-                        color = Color(0xFF0F172A)
+                        color = Color(0xFF0F172A),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
@@ -542,7 +568,16 @@ private fun RollCallStudentCard(
             }
 
             // Quick Status Buttons
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(
+                modifier = Modifier.align(Alignment.End),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                StatusToggleButton(
+                    label = "—",
+                    isSelected = currentStatus == "UNMARKED",
+                    activeColor = Color(0xFF64748B),
+                    onClick = { onStatusChange("UNMARKED") }
+                )
                 // Present
                 StatusToggleButton(
                     label = "P",
@@ -585,8 +620,8 @@ private fun StatusToggleButton(
 ) {
     Box(
         modifier = Modifier
-            .size(34.dp)
-            .clip(RoundedCornerShape(6.dp))
+            .size(40.dp)
+            .clip(RoundedCornerShape(10.dp))
             .background(if (isSelected) activeColor else Color(0xFFF1F5F9))
             .clickable { onClick() },
         contentAlignment = Alignment.Center

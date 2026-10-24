@@ -1,56 +1,73 @@
 package com.example.data.repository
 
-import kotlinx.coroutines.delay
+import com.example.data.remote.DjangoApiClient
+import java.io.IOException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 data class SyncState(
-    val apiBaseUrl: String = "https://shs-boarding.school.edu.gh/api/v1",
-    val apiToken: String = "Bearer shs_token_demo_9823",
-    val isOnline: Boolean = true,
+    val apiBaseUrl: String,
+    val isOnline: Boolean = false,
     val isSyncing: Boolean = false,
-    val lastSyncTime: Long = System.currentTimeMillis() - 15 * 60 * 1000L, // 15 mins ago
+    val lastSyncTime: Long? = null,
     val pendingOutboxCount: Int = 0,
-    val syncStatusMessage: String = "Synchronized with school backend"
+    val syncStatusMessage: String = "Sign in to connect to the school server."
 )
 
-class SyncManager {
-    private val _syncState = MutableStateFlow(SyncState())
+class SyncManager(private val apiClient: DjangoApiClient) {
+    private val _syncState = MutableStateFlow(SyncState(apiBaseUrl = apiClient.baseUrl))
     val syncState: StateFlow<SyncState> = _syncState.asStateFlow()
 
-    fun updateConfig(url: String, token: String) {
+    fun updateConfig(url: String) {
         _syncState.value = _syncState.value.copy(
-            apiBaseUrl = url.trim(),
-            apiToken = token.trim(),
-            syncStatusMessage = "Configuration saved. Ready to sync."
+            apiBaseUrl = url,
+            syncStatusMessage = "Using the configured school server."
         )
     }
 
-    suspend fun performSync(): Result<String> {
+    fun reportActionError(message: String) {
+        _syncState.value = _syncState.value.copy(
+            isOnline = false,
+            syncStatusMessage = message
+        )
+    }
+
+    fun reportActionSuccess(message: String) {
+        _syncState.value = _syncState.value.copy(
+            isOnline = true,
+            syncStatusMessage = message
+        )
+    }
+
+    suspend fun performSync(sync: suspend () -> Unit) {
         _syncState.value = _syncState.value.copy(
             isSyncing = true,
+            isOnline = false,
             syncStatusMessage = "Connecting to ${_syncState.value.apiBaseUrl}..."
         )
-
-        // Simulate network handshake and delta sync
-        delay(1200)
-
-        val success = true
-        return if (success) {
+        try {
+            sync()
             _syncState.value = _syncState.value.copy(
                 isSyncing = false,
+                isOnline = true,
                 lastSyncTime = System.currentTimeMillis(),
-                pendingOutboxCount = 0,
-                syncStatusMessage = "Sync complete. All records up to date."
+                syncStatusMessage = "Connected. School data refreshed."
             )
-            Result.success("Sync successful")
-        } else {
+        } catch (error: IOException) {
             _syncState.value = _syncState.value.copy(
                 isSyncing = false,
-                syncStatusMessage = "Sync failed: Server unreachable. Using local cache."
+                isOnline = false,
+                syncStatusMessage = "Sync failed: ${error.message ?: "School server unavailable."}"
             )
-            Result.failure(Exception("Server unreachable"))
+            throw error
+        } catch (error: IllegalStateException) {
+            _syncState.value = _syncState.value.copy(
+                isSyncing = false,
+                isOnline = false,
+                syncStatusMessage = "Sync failed: ${error.message ?: "Invalid server data."}"
+            )
+            throw error
         }
     }
 }

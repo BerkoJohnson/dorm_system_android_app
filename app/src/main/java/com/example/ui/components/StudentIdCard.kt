@@ -189,42 +189,62 @@ fun StudentIdCard(
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = "${house?.name ?: "House"}: Bed #${student.bedNumber}",
+                            text = if (student.bedNumber > 0) {
+                                "${house?.name ?: "House"}: Bed #${student.bedNumber}"
+                            } else {
+                                house?.name ?: "House"
+                            },
                             fontSize = 12.sp,
                             color = Color(0xFF374151),
                             fontWeight = FontWeight.Medium
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(4.dp))
-
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.Call,
-                            contentDescription = null,
-                            tint = Color(0xFF4B5563),
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = "Guardian: ${student.guardianPhone}",
-                            fontSize = 11.sp,
-                            color = Color(0xFF4B5563)
-                        )
+                    if (student.guardianPhone.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Call,
+                                contentDescription = null,
+                                tint = Color(0xFF4B5563),
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Guardian: ${student.guardianPhone}",
+                                fontSize = 11.sp,
+                                color = Color(0xFF4B5563)
+                            )
+                        }
                     }
                 }
 
                 Spacer(modifier = Modifier.width(12.dp))
 
-                // Right Column: Live QR Code
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    QrCodeView(
-                        content = student.qrCodeKey,
-                        size = 110.dp
-                    )
+                    if (student.qrCodeKey.isNotBlank()) {
+                        QrCodeView(
+                            content = student.qrCodeKey,
+                            size = 110.dp
+                        )
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .size(110.dp)
+                                .border(1.dp, Color(0xFFCBD5E1), RoundedCornerShape(8.dp)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "QR unavailable",
+                                fontSize = 10.sp,
+                                color = Color(0xFF64748B),
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "SCAN TO VERIFY",
+                        text = if (student.qrCodeKey.isNotBlank()) "SCAN TO VERIFY" else "NOT AVAILABLE",
                         fontSize = 9.sp,
                         fontWeight = FontWeight.Bold,
                         color = NavyPrimary,

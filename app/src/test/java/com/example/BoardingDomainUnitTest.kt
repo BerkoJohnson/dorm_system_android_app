@@ -2,12 +2,24 @@ package com.example
 
 import com.example.data.model.ExeatRequest
 import com.example.data.model.Student
+import com.example.data.model.UserRole
+import com.example.data.model.userRoleFromServerRole
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class BoardingDomainUnitTest {
+
+    @Test
+    fun serverRolesAreMappedExplicitlyAndUnknownRolesAreRejected() {
+        assertEquals(UserRole.ADMINISTRATOR, userRoleFromServerRole("ADMIN"))
+        assertEquals(UserRole.SENIOR_HOUSEMASTER, userRoleFromServerRole("SENIOR_HOUSEMASTER"))
+        assertEquals(UserRole.HOUSE_TUTOR, userRoleFromServerRole("HOUSE_TUTOR"))
+        assertEquals(UserRole.MEDICAL, userRoleFromServerRole("MEDICAL"))
+        assertEquals(null, userRoleFromServerRole("UNASSIGNED"))
+        assertEquals(null, userRoleFromServerRole("SOME_NEW_ROLE"))
+    }
 
     @Test
     fun testExeatOverdueCalculation() {

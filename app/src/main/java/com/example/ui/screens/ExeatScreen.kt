@@ -10,14 +10,17 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
@@ -48,9 +51,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.ui.viewmodel.ExeatWorkflow
 import com.example.data.model.ExeatRequest
 import com.example.data.model.Student
 import com.example.ui.theme.AmberWarning
@@ -66,6 +71,9 @@ import java.util.Locale
 @Composable
 fun ExeatScreen(
     viewModel: MainViewModel,
+    canCreate: Boolean,
+    canApprove: Boolean,
+    canReview: Boolean,
     modifier: Modifier = Modifier
 ) {
     val exeats by viewModel.exeats.collectAsStateWithLifecycle()
@@ -74,9 +82,15 @@ fun ExeatScreen(
 
     var selectedFilter by remember { mutableStateOf("ALL") }
     var selectedExeatForDetail by remember { mutableStateOf<ExeatRequest?>(null) }
+    var selectedExeatWorkflow by remember { mutableStateOf<ExeatWorkflow?>(null) }
     var exeatToApprove by remember { mutableStateOf<ExeatRequest?>(null) }
     var exeatToReject by remember { mutableStateOf<ExeatRequest?>(null) }
     var showCreateDialog by remember { mutableStateOf(false) }
+    var operation by remember { mutableStateOf<String?>(null) }
+    var operationReason by remember { mutableStateOf("") }
+    var operationDeparture by remember { mutableStateOf("") }
+    var operationReturn by remember { mutableStateOf("") }
+    var operationOutcome by remember { mutableStateOf("unused") }
 
     // Rejection reason input
     var rejectReason by remember { mutableStateOf("") }
@@ -96,12 +110,14 @@ fun ExeatScreen(
 
     Scaffold(
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = { showCreateDialog = true },
-                containerColor = NavyPrimary,
-                contentColor = GoldAccent
-            ) {
-                Icon(imageVector = Icons.Default.Add, contentDescription = "New Exeat")
+            if (canCreate) {
+                FloatingActionButton(
+                    onClick = { showCreateDialog = true },
+                    containerColor = NavyPrimary,
+                    contentColor = GoldAccent
+                ) {
+                    Icon(imageVector = Icons.Default.Add, contentDescription = "New Exeat")
+                }
             }
         }
     ) { paddingValues ->
@@ -109,9 +125,9 @@ fun ExeatScreen(
             modifier = modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .padding(horizontal = 16.dp)
+                .padding(horizontal = 20.dp)
         ) {
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             // Filter Chips
             val filterOptions = listOf(
@@ -129,7 +145,9 @@ fun ExeatScreen(
                     Surface(
                         shape = RoundedCornerShape(20.dp),
                         color = if (isSelected) NavyPrimary else Color(0xFFF1F5F9),
-                        modifier = Modifier.clickable { selectedFilter = key }
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .clickable { selectedFilter = key }
                     ) {
                         Text(
                             text = label,
@@ -165,9 +183,23 @@ fun ExeatScreen(
                     items(filteredExeats) { exeat ->
                         ExeatCard(
                             exeat = exeat,
-                            onApprove = { exeatToApprove = exeat },
-                            onReject = { exeatToReject = exeat },
-                            onClick = { selectedExeatForDetail = exeat }
+                            canApprove = canApprove,
+                            onApprove = {
+                                viewModel.loadExeatDetail(exeat) { detail, _ ->
+                                    exeatToApprove = detail
+                                }
+                            },
+                            onReject = {
+                                viewModel.loadExeatDetail(exeat) { detail, _ ->
+                                    exeatToReject = detail
+                                }
+                            },
+                            onClick = {
+                                viewModel.loadExeatDetail(exeat) { detail, workflow ->
+                                    selectedExeatForDetail = detail
+                                    selectedExeatWorkflow = workflow
+                                }
+                            }
                         )
                     }
                 }
@@ -309,7 +341,89 @@ fun ExeatScreen(
     if (selectedExeatForDetail != null) {
         ExeatDetailDialog(
             exeat = selectedExeatForDetail!!,
-            onDismiss = { selectedExeatForDetail = null }
+            workflow = selectedExeatWorkflow,
+            canApprove = canApprove,
+            canReview = canReview,
+            onAction = { action ->
+                operation = action
+                operationReason = ""
+                operationOutcome = when (action) {
+                    "reconcile" -> "unused"
+                    "review" -> "upheld"
+                    else -> ""
+                }
+                operationDeparture = if (action == "reconcile") {
+                    ""
+                } else {
+                    selectedExeatForDetail?.departureTime
+                        ?.let { java.time.Instant.ofEpochMilli(it).toString() }.orEmpty()
+                }
+                operationReturn = if (action == "reconcile") {
+                    ""
+                } else {
+                    selectedExeatForDetail?.expectedReturnTime
+                        ?.let { java.time.Instant.ofEpochMilli(it).toString() }.orEmpty()
+                }
+            },
+            onDismiss = {
+                selectedExeatForDetail = null
+                selectedExeatWorkflow = null
+            }
+        )
+    }
+
+    if (operation != null && selectedExeatForDetail != null) {
+        ExeatOperationDialog(
+            operation = operation.orEmpty(),
+            reason = operationReason,
+            onReasonChange = { operationReason = it },
+            departure = operationDeparture,
+            onDepartureChange = { operationDeparture = it },
+            expectedReturn = operationReturn,
+            onExpectedReturnChange = { operationReturn = it },
+            outcome = operationOutcome,
+            onOutcomeChange = { operationOutcome = it },
+            onDismiss = { operation = null },
+            onSubmit = {
+                val action = operation.orEmpty()
+                val payload = when (action) {
+                    "override" -> org.json.JSONObject().put("reason", operationReason)
+                    "reschedule" -> org.json.JSONObject()
+                        .put("expected_departure", operationDeparture)
+                        .put("expected_return", operationReturn)
+                        .put("reason", operationReason)
+                    "reconcile" -> org.json.JSONObject()
+                        .put("outcome", operationOutcome)
+                        .put("reason", operationReason)
+                                        .apply {
+                                            if (operationOutcome != "unused") {
+                                                put("actual_departure", operationDeparture)
+                                            }
+                                            if (operationOutcome == "returned") {
+                                                put("actual_return", operationReturn)
+                                            }
+                                        }
+                    "review" -> org.json.JSONObject()
+                        .put("outcome", operationOutcome)
+                        .put("notes", operationReason)
+                    else -> org.json.JSONObject()
+                }
+                viewModel.performExeatOperation(
+                    exeatId = selectedExeatForDetail!!.id,
+                    operation = action,
+                    payload = payload,
+                    onSuccess = {
+                        val current = selectedExeatForDetail
+                        operation = null
+                        if (current != null) {
+                            viewModel.loadExeatDetail(current) { detail, workflow ->
+                                selectedExeatForDetail = detail
+                                selectedExeatWorkflow = workflow
+                            }
+                        }
+                    }
+                )
+            }
         )
     }
 }
@@ -317,6 +431,7 @@ fun ExeatScreen(
 @Composable
 private fun ExeatCard(
     exeat: ExeatRequest,
+    canApprove: Boolean,
     onApprove: () -> Unit,
     onReject: () -> Unit,
     onClick: () -> Unit
@@ -327,7 +442,7 @@ private fun ExeatCard(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onClick() },
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
@@ -338,7 +453,10 @@ private fun ExeatCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 // Category & Pass ID
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     val categoryColor = when (exeat.category) {
                         "MEDICAL" -> Color(0xFFDC2626)
                         "ACADEMIC" -> Color(0xFF2563EB)
@@ -354,15 +472,19 @@ private fun ExeatCard(
                             color = categoryColor,
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = exeat.id,
-                        fontSize = 11.sp,
+                        fontSize = 10.sp,
                         fontFamily = FontFamily.Monospace,
-                        color = Color.Gray
+                        color = Color.Gray,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
 
@@ -396,46 +518,62 @@ private fun ExeatCard(
                 text = exeat.studentName,
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Bold,
-                color = NavyPrimary
+                color = NavyPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
-            Text(
-                text = "${exeat.studentIndexNumber} • Destination: ${exeat.destination}",
-                fontSize = 12.sp,
-                color = Color(0xFF4B5563)
-            )
+            val destinationLine = listOf(exeat.studentIndexNumber, exeat.destination)
+                .filter(String::isNotBlank)
+                .joinToString(" • ")
+            if (destinationLine.isNotBlank()) {
+                Text(
+                    text = destinationLine,
+                    fontSize = 12.sp,
+                    color = Color(0xFF4B5563),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
 
-            Spacer(modifier = Modifier.height(4.dp))
-
-            Text(
-                text = "Reason: ${exeat.reason}",
-                fontSize = 12.sp,
-                color = Color(0xFF6B7280),
-                maxLines = 2
-            )
+            if (exeat.reason.isNotBlank()) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Reason: ${exeat.reason}",
+                    fontSize = 12.sp,
+                    color = Color(0xFF6B7280),
+                    maxLines = 2
+                )
+            }
 
             Spacer(modifier = Modifier.height(8.dp))
 
             // Timestamps
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 val timeFormat = SimpleDateFormat("dd MMM, HH:mm", Locale.getDefault())
                 Text(
                     text = "Out: ${timeFormat.format(Date(exeat.departureTime))}",
                     fontSize = 11.sp,
-                    color = Color(0xFF64748B)
+                    color = Color(0xFF64748B),
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
                 Text(
                     text = "Return by: ${timeFormat.format(Date(exeat.expectedReturnTime))}",
                     fontSize = 11.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = if (isOverdue) CrimsonAlert else Color(0xFF64748B)
+                    color = if (isOverdue) CrimsonAlert else Color(0xFF64748B),
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
 
             // Approval Buttons for Pending Exeats
-            if (exeat.status == "PENDING") {
+            if (exeat.status == "PENDING" && canApprove) {
                 Spacer(modifier = Modifier.height(10.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -451,15 +589,25 @@ private fun ExeatCard(
                         Text("Reject", color = CrimsonAlert, fontSize = 11.sp)
                     }
                     Spacer(modifier = Modifier.width(8.dp))
-                    Button(
-                        onClick = onApprove,
-                        colors = ButtonDefaults.buttonColors(containerColor = EmeraldGreen),
-                        shape = RoundedCornerShape(6.dp),
-                        modifier = Modifier.height(34.dp)
-                    ) {
-                        Icon(imageVector = Icons.Default.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Approve", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    if (exeat.category == "EMERGENCY") {
+                        OutlinedButton(
+                            onClick = onClick,
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier.height(34.dp)
+                        ) {
+                            Text("Review override", color = NavyPrimary, fontSize = 11.sp)
+                        }
+                    } else {
+                        Button(
+                            onClick = onApprove,
+                            colors = ButtonDefaults.buttonColors(containerColor = EmeraldGreen),
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier.height(34.dp)
+                        ) {
+                            Icon(imageVector = Icons.Default.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Approve", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }
@@ -474,7 +622,7 @@ private fun CreateExeatDialog(
     onSubmit: (student: Student, category: String, reason: String, destination: String, depHours: Long, retHours: Long) -> Unit
 ) {
     var selectedStudentId by remember { mutableStateOf(students.firstOrNull()?.id ?: "") }
-    var category by remember { mutableStateOf("MEDICAL") }
+    var category by remember { mutableStateOf("Medical") }
     var reason by remember { mutableStateOf("") }
     var destination by remember { mutableStateOf("") }
     var durationHours by remember { mutableStateOf("6") }
@@ -485,7 +633,12 @@ private fun CreateExeatDialog(
             Text("Issue Exeat Pass", fontWeight = FontWeight.Bold, color = NavyPrimary)
         },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 420.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 Text("Select Student:", fontSize = 12.sp, fontWeight = FontWeight.Medium)
                 // Student Picker list or simple drop
                 var studentMenuExpanded by remember { mutableStateOf(false) }
@@ -501,7 +654,9 @@ private fun CreateExeatDialog(
                             text = selectedStudent?.fullName ?: "Select Student",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
-                            color = NavyPrimary
+                            color = NavyPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
 
@@ -521,23 +676,35 @@ private fun CreateExeatDialog(
                     }
                 }
 
-                // Category Buttons
-                Text("Category:", fontSize = 12.sp, fontWeight = FontWeight.Medium)
-                val categories = listOf("MEDICAL", "ACADEMIC", "FAMILY_EMERGENCY", "TOWN_PASS")
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    categories.forEach { cat ->
-                        Surface(
-                            shape = RoundedCornerShape(6.dp),
-                            color = if (category == cat) NavyPrimary else Color(0xFFF1F5F9),
-                            modifier = Modifier.clickable { category = cat }
-                        ) {
-                            Text(
-                                text = cat.take(4),
-                                color = if (category == cat) Color.White else Color(0xFF475569),
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
-                            )
+                Text("Category", fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                val categories = listOf(
+                    "Medical" to "Medical",
+                    "Town" to "Town pass",
+                    "Weekend" to "Weekend",
+                    "Emergency" to "Emergency",
+                    "Vacation" to "Vacation"
+                )
+                categories.chunked(2).forEach { categoryRow ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        categoryRow.forEach { (value, label) ->
+                            val selected = category == value
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (selected) NavyPrimary else Color(0xFFF1F5F9),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable { category = value }
+                            ) {
+                                Text(
+                                    text = label,
+                                    color = if (selected) Color.White else Color(0xFF475569),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
                     }
                 }
@@ -560,6 +727,7 @@ private fun CreateExeatDialog(
                     value = durationHours,
                     onValueChange = { durationHours = it },
                     label = { Text("Duration (Hours)") },
+                    singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
             }
@@ -568,11 +736,15 @@ private fun CreateExeatDialog(
             Button(
                 onClick = {
                     val student = students.find { it.id == selectedStudentId }
-                    if (student != null && destination.isNotBlank() && reason.isNotBlank()) {
-                        val hours = durationHours.toLongOrNull() ?: 6L
+                    val hours = durationHours.toLongOrNull()
+                    if (student != null && destination.isNotBlank() && reason.isNotBlank() && hours != null && hours > 0) {
                         onSubmit(student, category, reason, destination, 0L, hours)
                     }
                 },
+                enabled = students.any { it.id == selectedStudentId } &&
+                    destination.isNotBlank() &&
+                    reason.isNotBlank() &&
+                    (durationHours.toLongOrNull() ?: 0L) > 0,
                 colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary)
             ) {
                 Text("Submit Request", color = Color.White, fontWeight = FontWeight.Bold)
@@ -589,6 +761,10 @@ private fun CreateExeatDialog(
 @Composable
 private fun ExeatDetailDialog(
     exeat: ExeatRequest,
+    workflow: ExeatWorkflow?,
+    canApprove: Boolean,
+    canReview: Boolean,
+    onAction: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
     val timeFormat = SimpleDateFormat("EEEE, dd MMM yyyy 'at' HH:mm", Locale.getDefault())
@@ -617,12 +793,215 @@ private fun ExeatDetailDialog(
                 if (exeat.rejectionReason != null) {
                     Text("Rejection Reason: ${exeat.rejectionReason}", fontSize = 11.sp, color = CrimsonAlert)
                 }
+                if (workflow?.isOverdue == true) {
+                    Text("This pass is overdue.", fontSize = 11.sp, color = CrimsonAlert)
+                }
+                if (canApprove && exeat.status == "PENDING") {
+                    if (exeat.category == "EMERGENCY") {
+                        TextButton(onClick = { onAction("override") }) {
+                            Text("Emergency override", color = CrimsonAlert)
+                        }
+                    }
+                    TextButton(onClick = { onAction("cancel") }) {
+                        Text("Cancel pass", color = CrimsonAlert)
+                    }
+                }
+                if (canApprove && exeat.status == "APPROVED") {
+                    TextButton(onClick = { onAction("reschedule") }) {
+                        Text("Reschedule pass", color = NavyPrimary)
+                    }
+                    if (workflow?.hasReconciliation != true) {
+                        TextButton(onClick = { onAction("reconcile") }) {
+                            Text("Reconcile missing gate movement", color = NavyPrimary)
+                        }
+                    }
+                    TextButton(onClick = { onAction("cancel") }) {
+                        Text("Cancel pass", color = CrimsonAlert)
+                    }
+                }
+                if (canReview && workflow?.hasPendingReview == true) {
+                    TextButton(onClick = { onAction("review") }) {
+                        Text("Decide post-hoc review", color = NavyPrimary)
+                    }
+                }
             }
         },
         confirmButton = {
             Button(onClick = onDismiss, colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary)) {
                 Text("Close", color = Color.White)
             }
+        }
+    )
+}
+
+@Composable
+private fun ExeatOperationDialog(
+    operation: String,
+    reason: String,
+    onReasonChange: (String) -> Unit,
+    departure: String,
+    onDepartureChange: (String) -> Unit,
+    expectedReturn: String,
+    onExpectedReturnChange: (String) -> Unit,
+    outcome: String,
+    onOutcomeChange: (String) -> Unit,
+    onDismiss: () -> Unit,
+    onSubmit: () -> Unit
+) {
+    var outcomeMenuExpanded by remember(operation) { mutableStateOf(false) }
+    val requiresReason = operation in setOf("override", "reschedule", "reconcile")
+    val timestampsValid = operation != "reconcile" || when (outcome) {
+        "student_out" -> departure.isNotBlank()
+        "returned" -> departure.isNotBlank() && expectedReturn.isNotBlank()
+        else -> true
+    }
+    val title = when (operation) {
+        "override" -> "Emergency pass override"
+        "cancel" -> "Cancel exeat pass?"
+        "reschedule" -> "Reschedule exeat"
+        "reconcile" -> "Reconcile gate movement"
+        "review" -> "Decide post-hoc review"
+        else -> "Exeat action"
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title, color = NavyPrimary, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                when (operation) {
+                    "cancel" -> Text("This will cancel the pass on the school server.")
+                    "override" -> OutlinedTextField(
+                        value = reason,
+                        onValueChange = onReasonChange,
+                        label = { Text("Immediate emergency reason *") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    "reschedule" -> {
+                        Text("Enter ISO date-times in UTC, for example 2026-10-23T12:00:00Z.")
+                        OutlinedTextField(
+                            value = departure,
+                            onValueChange = onDepartureChange,
+                            label = { Text("New departure (UTC) *") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = expectedReturn,
+                            onValueChange = onExpectedReturnChange,
+                            label = { Text("New return (UTC) *") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = reason,
+                            onValueChange = onReasonChange,
+                            label = { Text("Reason for change *") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                    "reconcile" -> {
+                        Text("Select the verified outcome and provide the evidence or explanation.")
+                        Box {
+                            OutlinedButton(onClick = { outcomeMenuExpanded = true }) {
+                                Text(outcome.replace("_", " ").replaceFirstChar(Char::uppercase))
+                            }
+                            androidx.compose.material3.DropdownMenu(
+                                expanded = outcomeMenuExpanded,
+                                onDismissRequest = { outcomeMenuExpanded = false }
+                            ) {
+                                listOf(
+                                    "unused" to "Pass not used",
+                                    "student_out" to "Student travelled and is still out",
+                                    "returned" to "Student travelled and returned"
+                                ).forEach { (value, label) ->
+                                    androidx.compose.material3.DropdownMenuItem(
+                                        text = { Text(label) },
+                                        onClick = {
+                                            onOutcomeChange(value)
+                                            outcomeMenuExpanded = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                        OutlinedTextField(
+                            value = reason,
+                            onValueChange = onReasonChange,
+                            label = { Text("Evidence / explanation *") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        if (outcome != "unused") {
+                            Text("Enter confirmed or best-known actual times in UTC ISO format.")
+                            OutlinedTextField(
+                                value = departure,
+                                onValueChange = onDepartureChange,
+                                label = { Text("Actual departure") },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            if (outcome == "returned") {
+                                OutlinedTextField(
+                                    value = expectedReturn,
+                                    onValueChange = onExpectedReturnChange,
+                                    label = { Text("Actual return") },
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                        }
+                    }
+                    "review" -> {
+                        Text("Choose the review outcome. The authorizer cannot review their own override.")
+                        Box {
+                            OutlinedButton(onClick = { outcomeMenuExpanded = true }) {
+                                Text(outcome.replace("_", " ").replaceFirstChar(Char::uppercase))
+                            }
+                            androidx.compose.material3.DropdownMenu(
+                                expanded = outcomeMenuExpanded,
+                                onDismissRequest = { outcomeMenuExpanded = false }
+                            ) {
+                                listOf(
+                                    "upheld" to "Upheld",
+                                    "escalated" to "Escalated",
+                                    "rejected" to "Not justified"
+                                ).forEach { (value, label) ->
+                                    androidx.compose.material3.DropdownMenuItem(
+                                        text = { Text(label) },
+                                        onClick = {
+                                            onOutcomeChange(value)
+                                            outcomeMenuExpanded = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                        OutlinedTextField(
+                            value = reason,
+                            onValueChange = onReasonChange,
+                            label = { Text("Review notes") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onSubmit,
+                enabled = (!requiresReason || reason.isNotBlank()) && timestampsValid,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (operation == "cancel") CrimsonAlert else NavyPrimary
+                )
+            ) {
+                Text(
+                    text = if (operation == "cancel") "Confirm cancellation" else "Submit to server",
+                    color = Color.White
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Back") }
         }
     )
 }

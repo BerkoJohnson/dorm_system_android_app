@@ -33,4 +33,7 @@ interface ExeatDao {
 
     @Update
     suspend fun updateExeat(exeat: ExeatRequest)
+
+    @Query("DELETE FROM exeat_requests")
+    suspend fun clear()
 }

@@ -1,6 +1,7 @@
 package com.example.data.repository
 
 import com.example.data.local.AppDatabase
+import androidx.room.withTransaction
 import com.example.data.model.AttendanceRecord
 import com.example.data.model.AuditLog
 import com.example.data.model.ExeatRequest
@@ -32,6 +33,10 @@ sealed class GateVerificationResult {
     data class StudentNotFound(
         val query: String
     ) : GateVerificationResult()
+
+    data class LookupMessage(
+        val message: String
+    ) : GateVerificationResult()
 }
 
 class BoardingRepository(private val db: AppDatabase) {
@@ -42,6 +47,12 @@ class BoardingRepository(private val db: AppDatabase) {
     val allExeats: Flow<List<ExeatRequest>> = db.exeatDao().getAllExeats()
     val allMovements: Flow<List<GateMovement>> = db.gateMovementDao().getAllMovements()
     val allAuditLogs: Flow<List<AuditLog>> = db.auditDao().getAllAuditLogs()
+
+    suspend fun clearSessionData() {
+        db.withTransaction {
+            db.clearAllTables()
+        }
+    }
 
     fun getRoomsByHouse(houseId: String): Flow<List<RoomEntity>> =
         db.roomDao().getRoomsByHouse(houseId)

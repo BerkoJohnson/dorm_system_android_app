@@ -14,11 +14,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.History
@@ -29,7 +27,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -43,10 +40,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.data.model.AuditLog
 import com.example.ui.theme.EmeraldGreen
 import com.example.ui.theme.GoldAccent
 import com.example.ui.theme.NavyPrimary
@@ -61,13 +58,6 @@ fun ReportsAuditScreen(
     modifier: Modifier = Modifier
 ) {
     val syncState by viewModel.syncState.collectAsStateWithLifecycle()
-    val auditLogs by viewModel.auditLogs.collectAsStateWithLifecycle()
-    val metrics by viewModel.dashboardMetrics.collectAsStateWithLifecycle()
-
-    var apiUrlInput by remember { mutableStateOf(syncState.apiBaseUrl) }
-    var apiTokenInput by remember { mutableStateOf(syncState.apiToken) }
-    var reportExportFeedback by remember { mutableStateOf<String?>(null) }
-
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
@@ -88,7 +78,10 @@ fun ReportsAuditScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            modifier = Modifier.weight(1f),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Icon(
                                 imageVector = Icons.Default.CloudSync,
                                 contentDescription = null,
@@ -100,8 +93,9 @@ fun ReportsAuditScreen(
                                 text = "CENTRAL DJANGO BACKEND SYNC",
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
-                                letterSpacing = 1.sp,
-                                color = NavyPrimary
+                                color = NavyPrimary,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
 
@@ -121,30 +115,19 @@ fun ReportsAuditScreen(
 
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    OutlinedTextField(
-                        value = apiUrlInput,
-                        onValueChange = { apiUrlInput = it },
-                        label = { Text("Django Server Base URL") },
-                        placeholder = { Text("https://shs-backend.school.edu.gh/api/v1") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    OutlinedTextField(
-                        value = apiTokenInput,
-                        onValueChange = { apiTokenInput = it },
-                        label = { Text("Staff API Token") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
+                    Text(
+                        text = syncState.apiBaseUrl,
+                        fontSize = 12.sp,
+                        color = Color(0xFF475569)
                     )
 
                     Spacer(modifier = Modifier.height(10.dp))
 
                     val timeFormat = SimpleDateFormat("dd MMM yyyy, HH:mm:ss", Locale.getDefault())
                     Text(
-                        text = "Last Synchronized: ${timeFormat.format(Date(syncState.lastSyncTime))}",
+                        text = "Last Synchronized: ${
+                            syncState.lastSyncTime?.let { timeFormat.format(Date(it)) } ?: "Not synchronized yet"
+                        }",
                         fontSize = 11.sp,
                         color = Color(0xFF64748B)
                     )
@@ -157,18 +140,17 @@ fun ReportsAuditScreen(
 
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    Row(
+                    Column(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Button(
                             onClick = {
-                                viewModel.updateSyncConfig(apiUrlInput, apiTokenInput)
                                 viewModel.triggerSync()
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary),
                             shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.fillMaxWidth(),
                             enabled = !syncState.isSyncing
                         ) {
                             if (syncState.isSyncing) {
@@ -195,7 +177,10 @@ fun ReportsAuditScreen(
                 elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Icon(
                             imageVector = Icons.Default.Description,
                             contentDescription = null,
@@ -207,8 +192,9 @@ fun ReportsAuditScreen(
                             text = "OFFICIAL BOARDING REPORTS",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
-                            letterSpacing = 1.sp,
-                            color = NavyPrimary
+                            color = NavyPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
 
@@ -222,141 +208,53 @@ fun ReportsAuditScreen(
 
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    Row(
+                    Column(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Button(
-                            onClick = {
-                                reportExportFeedback = "Certified Daily Roll Call Digest (PDF) generated and saved to offline device storage."
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF1F5F9)),
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(imageVector = Icons.Default.CloudDownload, contentDescription = null, tint = NavyPrimary, modifier = Modifier.size(14.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Export Roll Call", color = NavyPrimary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                        }
-
-                        Button(
-                            onClick = {
-                                reportExportFeedback = "Exeat & Gate Movement Ledger exported with ${metrics.onExeat} active student departures."
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF1F5F9)),
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(imageVector = Icons.Default.CloudDownload, contentDescription = null, tint = NavyPrimary, modifier = Modifier.size(14.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Export Gate Log", color = NavyPrimary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                        }
-                    }
-
-                    if (reportExportFeedback != null) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Surface(
-                            shape = RoundedCornerShape(6.dp),
-                            color = Color(0xFFDCFCE7),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                text = reportExportFeedback ?: "",
-                                color = EmeraldGreen,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(8.dp)
-                            )
-                        }
+                        Text(
+                            text = "Report exports are not exposed by the mobile API yet. Use the Django web dashboard to generate official reports.",
+                            fontSize = 12.sp,
+                            color = Color(0xFF475569)
+                        )
                     }
                 }
             }
         }
 
-        // Section: Immutable Security Audit Log
+        // Audit data stays on the Django server; no mobile audit-feed endpoint exists.
         item {
-            Row(
+            Card(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.History,
-                        contentDescription = null,
-                        tint = NavyPrimary,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.History,
+                            contentDescription = null,
+                            tint = NavyPrimary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "SERVER AUDIT TRAIL",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.sp,
+                            color = Color(0xFF64748B)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "SYSTEM AUDIT TRAIL (${auditLogs.size})",
+                        text = "Audit entries are maintained by Django but are not available through the mobile API. Review the official audit trail in the Django web dashboard.",
                         fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.sp,
-                        color = Color(0xFF64748B)
+                        color = Color(0xFF475569)
                     )
                 }
             }
-        }
-
-        items(auditLogs) { log ->
-            AuditLogRow(log = log)
-        }
-    }
-}
-
-@Composable
-private fun AuditLogRow(log: AuditLog) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-    ) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(4.dp),
-                    color = NavyPrimary.copy(alpha = 0.08f)
-                ) {
-                    Text(
-                        text = log.action,
-                        color = NavyPrimary,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                    )
-                }
-
-                val timeFormat = SimpleDateFormat("dd MMM, HH:mm", Locale.getDefault())
-                Text(
-                    text = timeFormat.format(Date(log.timestamp)),
-                    fontSize = 10.sp,
-                    color = Color.Gray
-                )
-            }
-
-            Spacer(modifier = Modifier.height(6.dp))
-
-            Text(
-                text = log.details,
-                fontSize = 12.sp,
-                color = Color(0xFF334155),
-                lineHeight = 16.sp
-            )
-
-            Spacer(modifier = Modifier.height(4.dp))
-
-            Text(
-                text = "Actor: ${log.actorName} (${log.actorRole})",
-                fontSize = 10.sp,
-                color = Color(0xFF64748B),
-                fontFamily = FontFamily.Monospace
-            )
         }
     }
 }

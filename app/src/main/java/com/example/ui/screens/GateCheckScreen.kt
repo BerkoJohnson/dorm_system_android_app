@@ -1,5 +1,7 @@
 package com.example.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -14,8 +16,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -41,15 +43,20 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import com.example.data.model.Student
 import com.example.data.repository.GateVerificationResult
 import com.example.ui.theme.AmberWarning
@@ -57,6 +64,7 @@ import com.example.ui.theme.CrimsonAlert
 import com.example.ui.theme.EmeraldGreen
 import com.example.ui.theme.GoldAccent
 import com.example.ui.theme.NavyPrimary
+import com.example.ui.components.QrCameraScanner
 import com.example.ui.viewmodel.MainViewModel
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -69,17 +77,35 @@ fun GateCheckScreen(
 ) {
     val scanResult by viewModel.gateScanResult.collectAsStateWithLifecycle()
     val scanMessage by viewModel.scanMessage.collectAsStateWithLifecycle()
-    val movements by viewModel.movements.collectAsStateWithLifecycle()
     val students by viewModel.students.collectAsStateWithLifecycle()
 
     var queryInput by remember { mutableStateOf("") }
-    var gateOfficerName by remember { mutableStateOf("Officer J. Mensah") }
-    var selectedGate by remember { mutableStateOf("Main Gate") }
+    val context = LocalContext.current
+    var cameraPermissionGranted by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
+                PackageManager.PERMISSION_GRANTED
+        )
+    }
+    var cameraActive by remember { mutableStateOf(false) }
+    var cameraError by remember { mutableStateOf<String?>(null) }
+    val cameraPermissionRequest = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        cameraPermissionGranted = granted
+        if (granted) {
+            cameraError = null
+            cameraActive = true
+        } else {
+            cameraError = "Camera permission is required to scan a QR pass."
+        }
+    }
 
     Column(
         modifier = modifier
             .fillMaxSize()
             .padding(16.dp)
+            .verticalScroll(rememberScrollState())
     ) {
         // Scanner Viewfinder Card
         Card(
@@ -95,22 +121,25 @@ fun GateCheckScreen(
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "GATE MOVEMENT SCANNER",
+                        text = "GATE MOVEMENT LOOKUP",
                         color = Color.White,
                         fontWeight = FontWeight.Bold,
                         fontSize = 13.sp,
-                        letterSpacing = 1.sp
+                        letterSpacing = 0.5.sp,
+                        modifier = Modifier.weight(1f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                     Surface(
                         shape = RoundedCornerShape(12.dp),
                         color = GoldAccent
                     ) {
                         Text(
-                            text = selectedGate,
+                            text = "SCHOOL GATE",
                             color = NavyPrimary,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
@@ -121,36 +150,78 @@ fun GateCheckScreen(
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                // Simulated / Camera Viewfinder
                 Box(
                     modifier = Modifier
-                        .size(170.dp)
+                        .fillMaxWidth()
+                        .height(170.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .background(Color(0xFF071426))
                         .border(2.dp, GoldAccent, RoundedCornerShape(12.dp)),
                     contentAlignment = Alignment.Center
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(
-                            imageVector = Icons.Default.QrCodeScanner,
-                            contentDescription = "Scan QR",
-                            tint = GoldAccent,
-                            modifier = Modifier.size(54.dp)
+                    if (cameraActive && cameraPermissionGranted) {
+                        QrCameraScanner(
+                            onCodeScanned = { value ->
+                                queryInput = value
+                                cameraActive = false
+                                cameraError = null
+                                viewModel.verifyStudentGateCode(value)
+                            },
+                            onError = {
+                                cameraError = it
+                                cameraActive = false
+                            },
+                            modifier = Modifier.fillMaxSize()
                         )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "Align Student QR Pass",
-                            color = Color(0xFFCBD5E1),
-                            fontSize = 11.sp
-                        )
+                    } else {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(
+                                imageVector = Icons.Default.QrCodeScanner,
+                                contentDescription = "Scan QR",
+                                tint = GoldAccent,
+                                modifier = Modifier.size(54.dp)
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "Point the camera at a school QR pass",
+                                color = Color(0xFFCBD5E1),
+                                fontSize = 11.sp
+                            )
+                        }
                     }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(
+                    onClick = {
+                        cameraError = null
+                        if (cameraPermissionGranted) {
+                            cameraActive = !cameraActive
+                        } else {
+                            cameraPermissionRequest.launch(Manifest.permission.CAMERA)
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = GoldAccent)
+                ) {
+                    Text(
+                        text = if (cameraActive) "Stop QR scanner" else "Start QR scanner",
+                        color = NavyPrimary,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                if (cameraError != null) {
+                    Text(
+                        text = cameraError.orEmpty(),
+                        color = Color(0xFFFCA5A5),
+                        fontSize = 11.sp
+                    )
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // Fast Test Barcode Buttons for Quick Verification
+                // These shortcuts use the same server lookup as manual entry.
                 Text(
-                    text = "Tap sample student pass to test instant verification:",
+                    text = "Quick lookup from synced student records:",
                     color = Color(0xFF94A3B8),
                     fontSize = 11.sp
                 )
@@ -167,7 +238,7 @@ fun GateCheckScreen(
                                 .weight(1f)
                                 .clickable {
                                     queryInput = s.studentId
-                                    viewModel.verifyStudentGateCode(s.qrCodeKey)
+                                    viewModel.verifyStudentGateCode(s.studentId)
                                 }
                         ) {
                             Text(
@@ -176,7 +247,9 @@ fun GateCheckScreen(
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
                                 modifier = Modifier.padding(vertical = 6.dp, horizontal = 4.dp),
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
@@ -194,8 +267,8 @@ fun GateCheckScreen(
             OutlinedTextField(
                 value = queryInput,
                 onValueChange = { queryInput = it },
-                label = { Text("Manual Student ID or QR Code") },
-                placeholder = { Text("e.g. SHS/2024/0481") },
+                label = { Text("Admission, index, or pass number") },
+                placeholder = { Text("Enter the identifier from the school record") },
                 modifier = Modifier.weight(1f),
                 singleLine = true
             )
@@ -208,7 +281,8 @@ fun GateCheckScreen(
                 },
                 shape = RoundedCornerShape(8.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary),
-                modifier = Modifier.height(54.dp)
+                modifier = Modifier.size(54.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
             ) {
                 Icon(imageVector = Icons.Default.Search, contentDescription = "Verify")
             }
@@ -218,12 +292,12 @@ fun GateCheckScreen(
             Spacer(modifier = Modifier.height(8.dp))
             Surface(
                 shape = RoundedCornerShape(8.dp),
-                color = Color(0xFFDCFCE7),
+                color = Color(0xFFFEE2E2),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
                     text = scanMessage ?: "",
-                    color = EmeraldGreen,
+                    color = CrimsonAlert,
                     fontWeight = FontWeight.Bold,
                     fontSize = 12.sp,
                     modifier = Modifier.padding(10.dp)
@@ -236,16 +310,11 @@ fun GateCheckScreen(
             Spacer(modifier = Modifier.height(12.dp))
             VerificationResultCard(
                 result = scanResult!!,
-                officerName = gateOfficerName,
-                gateName = selectedGate,
-                onLogMovement = { student, exeatId, type, remarks ->
+                onLogMovement = { student, exeatId, type ->
                     viewModel.recordGateMovement(
                         student = student,
                         exeatId = exeatId,
-                        movementType = type,
-                        officerName = gateOfficerName,
-                        gateName = selectedGate,
-                        remarks = remarks
+                        movementType = type
                     )
                 },
                 onClear = { viewModel.clearGateScan() }
@@ -254,23 +323,24 @@ fun GateCheckScreen(
 
         Spacer(modifier = Modifier.height(14.dp))
 
-        // Gate Log Feed Header
         Text(
-            text = "TODAY'S GATE MOVEMENT LOG",
-            fontSize = 12.sp,
+            text = "GATE MOVEMENT HISTORY",
+            fontSize = 14.sp,
             fontWeight = FontWeight.Bold,
-            letterSpacing = 1.sp,
-            color = Color(0xFF64748B)
+            color = NavyPrimary
         )
         Spacer(modifier = Modifier.height(8.dp))
-
-        LazyColumn(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+        Surface(
+            shape = RoundedCornerShape(8.dp),
+            color = Color(0xFFF1F5F9),
+            modifier = Modifier.fillMaxWidth()
         ) {
-            items(movements) { mov ->
-                GateMovementRow(movement = mov)
-            }
+            Text(
+                text = "Gate movement history is not exposed by the mobile API. Departure and return actions are sent to the school server.",
+                color = Color(0xFF475569),
+                fontSize = 12.sp,
+                modifier = Modifier.padding(12.dp)
+            )
         }
     }
 }
@@ -278,9 +348,7 @@ fun GateCheckScreen(
 @Composable
 private fun VerificationResultCard(
     result: GateVerificationResult,
-    officerName: String,
-    gateName: String,
-    onLogMovement: (student: Student, exeatId: String?, movementType: String, remarks: String) -> Unit,
+    onLogMovement: (student: Student, exeatId: String?, movementType: String) -> Unit,
     onClear: () -> Unit
 ) {
     Card(
@@ -315,6 +383,7 @@ private fun VerificationResultCard(
                             is GateVerificationResult.ClearedForReturn -> "CLEARED FOR RETURN"
                             is GateVerificationResult.BlockedNoExeat -> "GATE PASS DENIED"
                             is GateVerificationResult.StudentNotFound -> "STUDENT NOT FOUND"
+                            is GateVerificationResult.LookupMessage -> "LOOKUP NEEDS ATTENTION"
                         },
                         fontWeight = FontWeight.Bold,
                         fontSize = 14.sp,
@@ -366,8 +435,7 @@ private fun VerificationResultCard(
                             onLogMovement(
                                 result.student,
                                 result.exeat.id,
-                                "DEPARTURE",
-                                "Departed on verified ${result.exeat.category} exeat"
+                                "DEPARTURE"
                             )
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = EmeraldGreen),
@@ -407,8 +475,7 @@ private fun VerificationResultCard(
                             onLogMovement(
                                 result.student,
                                 result.exeat?.id,
-                                "ARRIVAL",
-                                if (result.isOverdue) "Returned late (Overdue)" else "Returned on time"
+                                "ARRIVAL"
                             )
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1D4ED8)),
@@ -444,6 +511,14 @@ private fun VerificationResultCard(
                 is GateVerificationResult.StudentNotFound -> {
                     Text(
                         text = "No student record matching '${result.query}' was found in the school roster.",
+                        fontSize = 12.sp,
+                        color = CrimsonAlert
+                    )
+                }
+
+                is GateVerificationResult.LookupMessage -> {
+                    Text(
+                        text = result.message,
                         fontSize = 12.sp,
                         color = CrimsonAlert
                     )

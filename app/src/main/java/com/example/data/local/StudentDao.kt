@@ -48,4 +48,7 @@ interface StudentDao {
 
     @Query("SELECT COUNT(*) FROM students")
     suspend fun getStudentCount(): Int
+
+    @Query("DELETE FROM students")
+    suspend fun clear()
 }

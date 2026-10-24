@@ -20,4 +20,7 @@ interface RoomDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertRooms(rooms: List<RoomEntity>)
+
+    @Query("DELETE FROM rooms")
+    suspend fun clear()
 }

@@ -42,6 +42,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -63,10 +64,6 @@ fun DormOccupancyScreen(
     val rooms by viewModel.rooms.collectAsStateWithLifecycle()
     val students by viewModel.students.collectAsStateWithLifecycle()
 
-    var studentToReallocate by remember { mutableStateOf<Student?>(null) }
-    var reallocationRoomId by remember { mutableStateOf("") }
-    var reallocationBedNum by remember { mutableStateOf("1") }
-
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
@@ -83,7 +80,7 @@ fun DormOccupancyScreen(
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "Monitor bed space availability, fire safety capacity limits, and student room placements.",
+                text = "Monitor server-reported house and dormitory capacity. Bed-level placement editing is not available through the mobile API.",
                 fontSize = 12.sp,
                 color = Color(0xFF64748B)
             )
@@ -96,103 +93,9 @@ fun DormOccupancyScreen(
             HouseDormSection(
                 house = house,
                 rooms = houseRooms,
-                students = houseStudents,
-                onReassignClick = { s ->
-                    studentToReallocate = s
-                    reallocationRoomId = s.roomId
-                    reallocationBedNum = s.bedNumber.toString()
-                }
+                students = houseStudents
             )
         }
-    }
-
-    // Reallocation Dialog
-    if (studentToReallocate != null) {
-        val s = studentToReallocate!!
-        val availableRooms = rooms.filter { it.houseId == s.houseId }
-
-        AlertDialog(
-            onDismissRequest = { studentToReallocate = null },
-            title = {
-                Text(
-                    text = "Reallocate Bed Space",
-                    fontWeight = FontWeight.Bold,
-                    color = NavyPrimary
-                )
-            },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = "Reassign ${s.fullName} (${s.studentId})",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp
-                    )
-
-                    Text("Target Room:", fontSize = 12.sp, color = Color.Gray)
-                    var roomMenuExpanded by remember { mutableStateOf(false) }
-                    val currentTargetRoom = availableRooms.find { it.id == reallocationRoomId }
-
-                    Box {
-                        Button(
-                            onClick = { roomMenuExpanded = true },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF1F5F9)),
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                text = currentTargetRoom?.dormName ?: "Select Room",
-                                color = NavyPrimary,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-
-                        androidx.compose.material3.DropdownMenu(
-                            expanded = roomMenuExpanded,
-                            onDismissRequest = { roomMenuExpanded = false }
-                        ) {
-                            availableRooms.forEach { r ->
-                                androidx.compose.material3.DropdownMenuItem(
-                                    text = { Text("${r.dormName} (Capacity: ${r.capacity})") },
-                                    onClick = {
-                                        reallocationRoomId = r.id
-                                        roomMenuExpanded = false
-                                    }
-                                )
-                            }
-                        }
-                    }
-
-                    OutlinedTextField(
-                        value = reallocationBedNum,
-                        onValueChange = { reallocationBedNum = it },
-                        label = { Text("Bed Number") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        val bed = reallocationBedNum.toIntOrNull() ?: 1
-                        viewModel.reallocateStudentRoom(
-                            studentId = s.id,
-                            newRoomId = reallocationRoomId,
-                            newBedNumber = bed,
-                            actorName = "Duty Housemaster"
-                        )
-                        studentToReallocate = null
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary)
-                ) {
-                    Text("Confirm Reassignment", color = Color.White, fontWeight = FontWeight.Bold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { studentToReallocate = null }) {
-                    Text("Cancel", color = Color.Gray)
-                }
-            }
-        )
     }
 }
 
@@ -200,8 +103,7 @@ fun DormOccupancyScreen(
 private fun HouseDormSection(
     house: House,
     rooms: List<RoomEntity>,
-    students: List<Student>,
-    onReassignClick: (Student) -> Unit
+    students: List<Student>
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -215,17 +117,21 @@ private fun HouseDormSection(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = house.name,
                         fontWeight = FontWeight.Bold,
                         fontSize = 16.sp,
-                        color = NavyPrimary
+                        color = NavyPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                     Text(
                         text = "Housemaster: ${house.housemasterName} (${house.housemasterPhone})",
                         fontSize = 11.sp,
-                        color = Color.Gray
+                        color = Color.Gray,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
 
@@ -262,7 +168,10 @@ private fun HouseDormSection(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                Row(
+                                    modifier = Modifier.weight(1f),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
                                     Icon(
                                         imageVector = Icons.Default.MeetingRoom,
                                         contentDescription = null,
@@ -274,15 +183,19 @@ private fun HouseDormSection(
                                         text = room.dormName,
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 13.sp,
-                                        color = NavyPrimary
+                                        color = NavyPrimary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f)
                                     )
                                 }
 
                                 Text(
-                                    text = "${roomOccupants.size} / ${room.capacity} occupied",
+                                    text = "${roomOccupants.size} / ${room.capacity}",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = if (isFull) CrimsonAlert else EmeraldGreen
+                                    color = if (isFull) CrimsonAlert else EmeraldGreen,
+                                    maxLines = 1
                                 )
                             }
 
@@ -303,35 +216,20 @@ private fun HouseDormSection(
                                             horizontalArrangement = Arrangement.SpaceBetween,
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                Box(
-                                                    modifier = Modifier
-                                                        .size(18.dp)
-                                                        .clip(CircleShape)
-                                                        .background(NavyPrimary.copy(alpha = 0.1f)),
-                                                    contentAlignment = Alignment.Center
-                                                ) {
-                                                    Text(
-                                                        text = "${occupant.bedNumber}",
-                                                        fontSize = 10.sp,
-                                                        fontWeight = FontWeight.Bold,
-                                                        color = NavyPrimary
-                                                    )
-                                                }
-                                                Spacer(modifier = Modifier.width(6.dp))
-                                                Text(
-                                                    text = occupant.fullName,
-                                                    fontSize = 12.sp,
-                                                    color = Color(0xFF334155)
-                                                )
-                                            }
-
                                             Text(
-                                                text = "Reassign",
-                                                fontSize = 11.sp,
-                                                color = NavyPrimary,
-                                                fontWeight = FontWeight.Bold,
-                                                modifier = Modifier.clickable { onReassignClick(occupant) }
+                                                text = occupant.fullName,
+                                                fontSize = 12.sp,
+                                                color = Color(0xFF334155),
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                text = occupant.studentId,
+                                                fontSize = 10.sp,
+                                                color = Color(0xFF64748B),
+                                                maxLines = 1
                                             )
                                         }
                                     }

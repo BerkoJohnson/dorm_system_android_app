@@ -1,6 +1,16 @@
 package com.example.ui.screens
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,15 +33,14 @@ import androidx.compose.material.icons.filled.Bed
 import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material.icons.filled.MeetingRoom
-import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.QrCodeScanner
-import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -42,6 +51,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -73,11 +83,10 @@ fun DashboardScreen(
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
-            .padding(horizontal = 16.dp),
+            .padding(horizontal = 20.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         item {
-            Spacer(modifier = Modifier.height(8.dp))
             // Role-Specific Welcome Card
             WelcomeBanner(
                 role = currentRole,
@@ -89,16 +98,14 @@ fun DashboardScreen(
         item {
             // Metrics Grid
             Text(
-                text = "BOARDING OPERATIONS OVERVIEW",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 1.sp,
-                color = Color(0xFF64748B)
+                text = "Boarding overview",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface
             )
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(10.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 MetricCard(
                     title = "In Dorms",
@@ -118,13 +125,13 @@ fun DashboardScreen(
             Spacer(modifier = Modifier.height(8.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 MetricCard(
                     title = "Sick Bay",
                     value = "${metrics.sickBay}",
                     sub = "Infirmary care",
-                    color = Color(0xFF7C3AED),
+                    color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.weight(1f)
                 )
                 MetricCard(
@@ -140,16 +147,14 @@ fun DashboardScreen(
         // Quick Role Actions
         item {
             Text(
-                text = "QUICK ACTIONS",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 1.sp,
-                color = Color(0xFF64748B)
+                text = "Quick actions",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface
             )
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(10.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 QuickActionButton(
                     icon = Icons.Default.Checklist,
@@ -165,18 +170,24 @@ fun DashboardScreen(
                     modifier = Modifier.weight(1f),
                     onClick = { viewModel.navigateTo(AppScreen.GATE_CHECK) }
                 )
+            }
+            Spacer(modifier = Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
                 QuickActionButton(
                     icon = Icons.Default.ExitToApp,
                     label = "Exeats",
                     badge = if (metrics.pendingExeats > 0) "${metrics.pendingExeats}" else null,
-                    color = Color(0xFF0284C7),
+                    color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.weight(1f),
                     onClick = { viewModel.navigateTo(AppScreen.EXEATS) }
                 )
                 QuickActionButton(
                     icon = Icons.Default.Bed,
                     label = "Dorms",
-                    color = Color(0xFF059669),
+                    color = EmeraldGreen,
                     modifier = Modifier.weight(1f),
                     onClick = { viewModel.navigateTo(AppScreen.DORMS) }
                 )
@@ -192,16 +203,13 @@ fun DashboardScreen(
             ) {
                 Text(
                     text = "BOARDING HOUSES (${houses.size})",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.sp,
-                    color = Color(0xFF64748B)
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = "View All →",
-                    fontSize = 12.sp,
-                    color = NavyPrimary,
-                    fontWeight = FontWeight.Bold,
+                    text = "View all",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.clickable { viewModel.navigateTo(AppScreen.DORMS) }
                 )
             }
@@ -224,22 +232,20 @@ fun DashboardScreen(
         // Recent Gate Movements Stream
         item {
             Text(
-                text = "RECENT GATE MOVEMENTS",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 1.sp,
-                color = Color(0xFF64748B)
+                text = "Recent gate movements",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface
             )
             Spacer(modifier = Modifier.height(8.dp))
             if (movements.isEmpty()) {
                 Surface(
                     shape = RoundedCornerShape(12.dp),
-                    color = Color.White,
+                    color = MaterialTheme.colorScheme.surface,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
                         text = "No gate movements logged today yet.",
-                        color = Color.Gray,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(16.dp),
                         fontSize = 13.sp
                     )
@@ -263,106 +269,140 @@ private fun WelcomeBanner(
     onNavigate: (AppScreen) -> Unit
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = NavyPrimary)
+        modifier = Modifier
+            .fillMaxWidth()
+            .animateContentSize(),
+        shape = MaterialTheme.shapes.extraLarge,
+        colors = CardDefaults.cardColors(containerColor = NavyPrimary),
+        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp)
     ) {
-        Column(modifier = Modifier.padding(18.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.Top
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    androidx.compose.foundation.Image(
-                        painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.eden_logo),
-                        contentDescription = "Eden Creative Systems",
-                        modifier = Modifier
-                            .size(44.dp)
-                            .clip(RoundedCornerShape(8.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(
+                    brush = androidx.compose.ui.graphics.Brush.linearGradient(
+                        colors = listOf(NavyPrimary, Color(0xFF0D4D9A), Color(0xFF08704E))
                     )
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Column {
+                )
+        ) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.Top
+                ) {
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color.White.copy(alpha = 0.12f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            androidx.compose.foundation.Image(
+                                painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.eden_logo),
+                                contentDescription = "Eden Creative Systems",
+                                modifier = Modifier.size(26.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column {
+                            Text(
+                                text = when (role) {
+                                    UserRole.HOUSEMASTER -> "Housemaster Duty Portal"
+                                    UserRole.HOUSE_TUTOR -> "House Tutor Duty Portal"
+                                    UserRole.SENIOR_HOUSEMASTER -> "Senior Housemaster Portal"
+                                    UserRole.MEDICAL -> "Medical / Infirmary Portal"
+                                    UserRole.GATE_OFFICER -> "Campus Gate Security"
+                                    UserRole.ADMINISTRATOR -> "School Boarding Admin"
+                                },
+                                color = Color.White,
+                                style = MaterialTheme.typography.titleMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = "Eden Creative Systems • SHS Boarding",
+                                color = GoldAccent,
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(999.dp),
+                        color = GoldAccent
+                    ) {
                         Text(
-                            text = when (role) {
-                                UserRole.HOUSEMASTER -> "Housemaster Duty Portal"
-                                UserRole.GATE_OFFICER -> "Campus Gate Security"
-                                UserRole.ADMINISTRATOR -> "School Boarding Admin"
-                            },
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 17.sp
-                        )
-                        Text(
-                            text = "Eden Creative Systems • SHS Boarding",
-                            color = GoldAccent,
+                            text = "${metrics.totalBoarders} Boarders",
+                            color = NavyPrimary,
                             fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                         )
                     }
                 }
 
-                Surface(
-                    shape = RoundedCornerShape(20.dp),
-                    color = GoldAccent
-                ) {
-                    Text(
-                        text = "${metrics.totalBoarders} Boarders",
-                        color = NavyPrimary,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                    )
+                Spacer(modifier = Modifier.height(12.dp))
+
+                val bannerMessage = when (role) {
+                    UserRole.HOUSEMASTER ->
+                        if (metrics.pendingExeats > 0)
+                            "${metrics.pendingExeats} pending exeat requests need your review."
+                        else
+                            "All dorms are accounted for and ready for the next roll call."
+                    UserRole.HOUSE_TUTOR ->
+                        "Review attendance for your assigned house."
+                    UserRole.SENIOR_HOUSEMASTER ->
+                        "Review school boarding operations and house attendance."
+                    UserRole.MEDICAL ->
+                        "Review medical exeat requests within your assigned scope."
+                    UserRole.GATE_OFFICER ->
+                        "${metrics.onExeat} students are on approved exeat. Keep gate access secure."
+                    UserRole.ADMINISTRATOR ->
+                        "Occupancy is at ${metrics.occupancyPercent}%. School administration is active."
                 }
-            }
 
-            Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = bannerMessage,
+                    color = Color(0xFFE2E8F0),
+                    style = MaterialTheme.typography.bodyMedium
+                )
 
-            val bannerMessage = when (role) {
-                UserRole.HOUSEMASTER ->
-                    if (metrics.pendingExeats > 0)
-                        "${metrics.pendingExeats} pending exeat requests awaiting your review and approval."
-                    else
-                        "All dorms accounted for. Ready for evening roll call inspection."
-                UserRole.GATE_OFFICER ->
-                    "${metrics.onExeat} students currently on authorized exeat passes. Scan QR codes at the gate."
-                UserRole.ADMINISTRATOR ->
-                    "Overall dormitory occupancy is at ${metrics.occupancyPercent}%. System running in offline-first mode."
-            }
+                Spacer(modifier = Modifier.height(14.dp))
 
-            Text(
-                text = bannerMessage,
-                color = Color(0xFFE2E8F0),
-                fontSize = 13.sp,
-                lineHeight = 18.sp
-            )
-
-            Spacer(modifier = Modifier.height(14.dp))
-
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = {
-                        when (role) {
-                            UserRole.HOUSEMASTER -> onNavigate(AppScreen.ROLL_CALL)
-                            UserRole.GATE_OFFICER -> onNavigate(AppScreen.GATE_CHECK)
-                            UserRole.ADMINISTRATOR -> onNavigate(AppScreen.REPORTS_SYNC)
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = GoldAccent),
-                    shape = RoundedCornerShape(8.dp)
-                ) {
-                    Text(
-                        text = when (role) {
-                            UserRole.HOUSEMASTER -> "Start Roll Call"
-                            UserRole.GATE_OFFICER -> "Open QR Scanner"
-                            UserRole.ADMINISTRATOR -> "View Audit Logs"
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = {
+                            when (role) {
+                                UserRole.HOUSEMASTER -> onNavigate(AppScreen.ROLL_CALL)
+                                UserRole.HOUSE_TUTOR -> onNavigate(AppScreen.ROLL_CALL)
+                                UserRole.SENIOR_HOUSEMASTER -> onNavigate(AppScreen.ROLL_CALL_HISTORY)
+                                UserRole.MEDICAL -> onNavigate(AppScreen.EXEATS)
+                                UserRole.GATE_OFFICER -> onNavigate(AppScreen.GATE_CHECK)
+                                UserRole.ADMINISTRATOR -> onNavigate(AppScreen.REPORTS_SYNC)
+                            }
                         },
-                        color = NavyPrimary,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 12.sp
-                    )
+                        colors = ButtonDefaults.buttonColors(containerColor = GoldAccent),
+                        shape = MaterialTheme.shapes.small
+                    ) {
+                        Text(
+                            text = when (role) {
+                                UserRole.HOUSEMASTER -> "Start Roll Call"
+                                UserRole.HOUSE_TUTOR -> "Start Roll Call"
+                                UserRole.SENIOR_HOUSEMASTER -> "Review Roll Call"
+                                UserRole.MEDICAL -> "Review Exeats"
+                                UserRole.GATE_OFFICER -> "Open QR Scanner"
+                                UserRole.ADMINISTRATOR -> "Administration & Sync"
+                            },
+                            color = NavyPrimary,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp
+                        )
+                    }
                 }
             }
         }
@@ -379,9 +419,10 @@ private fun MetricCard(
 ) {
     Card(
         modifier = modifier,
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
             Row(
@@ -393,26 +434,35 @@ private fun MetricCard(
                     text = title,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = Color(0xFF475569)
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Box(
                     modifier = Modifier
-                        .size(8.dp)
+                        .size(10.dp)
                         .clip(CircleShape)
                         .background(color)
                 )
             }
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = value,
-                fontSize = 24.sp,
-                fontWeight = FontWeight.Bold,
-                color = color
-            )
+            Spacer(modifier = Modifier.height(10.dp))
+            AnimatedContent(
+                targetState = value,
+                transitionSpec = {
+                    (fadeIn() + slideInVertically { it / 3 }) togetherWith
+                        (fadeOut() + slideOutVertically { -it / 3 })
+                },
+                label = "dashboard-metric"
+            ) { animatedValue ->
+                Text(
+                    text = animatedValue,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = color
+                )
+            }
             Text(
                 text = sub,
                 fontSize = 11.sp,
-                color = Color(0xFF94A3B8)
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }
@@ -428,10 +478,13 @@ private fun QuickActionButton(
     modifier: Modifier = Modifier
 ) {
     Card(
-        modifier = modifier.clickable { onClick() },
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        modifier = modifier
+            .animateContentSize()
+            .clickable { onClick() },
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
         Column(
             modifier = Modifier
@@ -443,8 +496,8 @@ private fun QuickActionButton(
             Box {
                 Box(
                     modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
+                        .size(42.dp)
+                        .clip(RoundedCornerShape(14.dp))
                         .background(color.copy(alpha = 0.12f)),
                     contentAlignment = Alignment.Center
                 ) {
@@ -480,7 +533,7 @@ private fun QuickActionButton(
                 text = label,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.SemiBold,
-                color = Color(0xFF1E293B)
+                color = MaterialTheme.colorScheme.onSurface
             )
         }
     }
@@ -493,14 +546,21 @@ private fun HouseCard(
     onClick: () -> Unit
 ) {
     val occupancyFraction = (studentCount.toFloat() / house.capacity.coerceAtLeast(1)).coerceIn(0f, 1f)
+    val animatedOccupancy by animateFloatAsState(
+        targetValue = occupancyFraction,
+        animationSpec = spring(dampingRatio = 0.85f, stiffness = 240f),
+        label = "house-occupancy"
+    )
 
     Card(
         modifier = Modifier
             .width(200.dp)
+            .animateContentSize()
             .clickable { onClick() },
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
             Row(
@@ -531,7 +591,9 @@ private fun HouseCard(
             Text(
                 text = house.housemasterName,
                 fontSize = 11.sp,
-                color = Color.Gray
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
 
             Spacer(modifier = Modifier.height(10.dp))
@@ -543,25 +605,25 @@ private fun HouseCard(
                 Text(
                     text = "Occupancy",
                     fontSize = 11.sp,
-                    color = Color(0xFF64748B)
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
                     text = "$studentCount / ${house.capacity}",
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
-                    color = NavyPrimary
+                    color = MaterialTheme.colorScheme.onSurface
                 )
             }
 
             Spacer(modifier = Modifier.height(4.dp))
             LinearProgressIndicator(
-                progress = { occupancyFraction },
+                progress = { animatedOccupancy },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(6.dp)
                     .clip(RoundedCornerShape(3.dp)),
                 color = Color(android.graphics.Color.parseColor(house.colorHex)),
-                trackColor = Color(0xFFF1F5F9)
+                trackColor = MaterialTheme.colorScheme.surfaceVariant
             )
         }
     }
@@ -571,8 +633,9 @@ private fun HouseCard(
 fun GateMovementRow(movement: com.example.data.model.GateMovement) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
         Row(
@@ -599,17 +662,21 @@ fun GateMovementRow(movement: com.example.data.model.GateMovement) {
                     )
                 }
                 Spacer(modifier = Modifier.width(10.dp))
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = movement.studentName,
                         fontWeight = FontWeight.Bold,
                         fontSize = 13.sp,
-                        color = NavyPrimary
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                     Text(
                         text = "${movement.studentIndexNumber} • ${movement.officerName}",
                         fontSize = 11.sp,
-                        color = Color.Gray
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }

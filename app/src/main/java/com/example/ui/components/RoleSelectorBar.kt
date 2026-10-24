@@ -11,20 +11,28 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AdminPanelSettings
+import androidx.compose.material.icons.filled.ExitToApp
+import androidx.compose.material.icons.filled.LocalHospital
 import androidx.compose.material.icons.filled.MeetingRoom
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.Image
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -33,6 +41,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -44,9 +54,9 @@ import com.example.ui.theme.NavyPrimary
 @Composable
 fun RoleSelectorBar(
     currentRole: UserRole,
-    onRoleSelected: (UserRole) -> Unit,
     syncStatus: String,
     onSyncClick: () -> Unit,
+    onLogoutClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -54,27 +64,49 @@ fun RoleSelectorBar(
     Surface(
         modifier = modifier.fillMaxWidth(),
         color = NavyPrimary,
-        shadowElevation = 4.dp
+        shadowElevation = 0.dp
     ) {
+        val isError = syncStatus.contains("fail", ignoreCase = true) ||
+            syncStatus.contains("unreachable", ignoreCase = true)
+        val isConnecting = syncStatus.contains("connect", ignoreCase = true)
+        val syncRotation by animateFloatAsState(
+            targetValue = if (isConnecting) 360f else 0f,
+            animationSpec = spring(stiffness = 180f),
+            label = "sync-icon-rotation"
+        )
+
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .background(
+                    brush = androidx.compose.ui.graphics.Brush.linearGradient(
+                        colors = listOf(NavyPrimary, Color(0xFF0E3A7A))
+                    )
+                )
                 .padding(horizontal = 16.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Role Switcher Button
+            Image(
+                painter = painterResource(id = com.example.R.drawable.eden_logo),
+                contentDescription = "Eden Creative Systems",
+                modifier = Modifier.size(32.dp)
+            )
+
             Box {
                 Row(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(Color(0xFF1E293B))
-                        .clickable { expanded = true }
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFF123B76))
+                        .defaultMinSize(minHeight = 48.dp)
+                        .padding(horizontal = 10.dp, vertical = 7.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     val icon = when (currentRole) {
                         UserRole.HOUSEMASTER -> Icons.Default.MeetingRoom
+                        UserRole.HOUSE_TUTOR -> Icons.Default.MeetingRoom
+                        UserRole.SENIOR_HOUSEMASTER -> Icons.Default.AdminPanelSettings
+                        UserRole.MEDICAL -> Icons.Default.LocalHospital
                         UserRole.GATE_OFFICER -> Icons.Default.Security
                         UserRole.ADMINISTRATOR -> Icons.Default.AdminPanelSettings
                     }
@@ -90,73 +122,89 @@ fun RoleSelectorBar(
                             text = currentRole.badgeTitle,
                             color = Color.White,
                             fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1
                         )
                         Text(
-                            text = "Tap to switch role ▼",
-                            color = Color(0xFF94A3B8),
+                            text = currentRole.displayName,
+                            color = Color(0xFFB8C7D8),
                             fontSize = 9.sp
                         )
                     }
                 }
 
+            }
+
+            Box {
+                IconButton(onClick = { expanded = true }) {
+                    Icon(
+                        imageVector = Icons.Default.MoreVert,
+                        contentDescription = "Account options",
+                        tint = Color.White
+                    )
+                }
                 DropdownMenu(
                     expanded = expanded,
                     onDismissRequest = { expanded = false }
                 ) {
-                    UserRole.values().forEach { role ->
-                        DropdownMenuItem(
-                            text = {
-                                Column {
-                                    Text(
-                                        text = role.displayName,
-                                        fontWeight = if (role == currentRole) FontWeight.Bold else FontWeight.Normal,
-                                        color = if (role == currentRole) NavyPrimary else Color.Unspecified
-                                    )
-                                    Text(
-                                        text = role.badgeTitle,
-                                        fontSize = 11.sp,
-                                        color = Color.Gray
-                                    )
-                                }
-                            },
-                            onClick = {
-                                onRoleSelected(role)
-                                expanded = false
-                            }
-                        )
-                    }
+                    DropdownMenuItem(
+                        text = { Text("Sign out") },
+                        leadingIcon = {
+                            Icon(Icons.Default.ExitToApp, contentDescription = null)
+                        },
+                        onClick = {
+                            expanded = false
+                            onLogoutClick()
+                        }
+                    )
                 }
             }
 
-            // Sync Indicator & Trigger Button
-            Row(
+            if (currentRole == UserRole.ADMINISTRATOR) Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0xFF1E293B).copy(alpha = 0.6f))
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(Color(0xFF123B76).copy(alpha = 0.7f))
                     .clickable { onSyncClick() }
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                    .defaultMinSize(minHeight = 48.dp)
+                    .padding(horizontal = 10.dp, vertical = 6.dp)
             ) {
+                val syncColor by animateColorAsState(
+                    targetValue = when {
+                        isError -> Color(0xFFEF4444)
+                        isConnecting -> GoldAccent
+                        else -> EmeraldGreen
+                    },
+                    animationSpec = spring(stiffness = 500f),
+                    label = "sync-status-color"
+                )
                 Box(
                     modifier = Modifier
                         .size(8.dp)
                         .clip(CircleShape)
-                        .background(EmeraldGreen)
+                        .background(syncColor)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = "Offline-Ready",
-                    color = Color(0xFFCBD5E1),
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Medium
+                    text = when {
+                        isError -> "Offline"
+                        isConnecting -> "Syncing"
+                        syncStatus.contains("ready", ignoreCase = true) -> "Ready"
+                        else -> "Synced"
+                    },
+                    color = Color(0xFFE2E8F0),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1
                 )
-                Spacer(modifier = Modifier.width(4.dp))
+                Spacer(modifier = Modifier.width(6.dp))
                 Icon(
                     imageVector = Icons.Default.Sync,
-                    contentDescription = "Sync",
+                    contentDescription = "Sync status: $syncStatus",
                     tint = GoldAccent,
-                    modifier = Modifier.size(16.dp)
+                    modifier = Modifier
+                        .size(16.dp)
+                        .graphicsLayer { rotationZ = syncRotation }
                 )
             }
         }
