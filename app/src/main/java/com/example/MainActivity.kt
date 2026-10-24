@@ -69,6 +69,7 @@ import com.example.ui.screens.DormOccupancyScreen
 import com.example.ui.screens.ExeatScreen
 import com.example.ui.screens.GateCheckScreen
 import com.example.ui.screens.NotificationsScreen
+import com.example.ui.screens.OperationsHubScreen
 import com.example.ui.screens.ReportsAuditScreen
 import com.example.ui.screens.RollCallScreen
 import com.example.ui.screens.RollCallHistoryScreen
@@ -176,12 +177,17 @@ fun SHSAppRoot(viewModel: MainViewModel, apiClient: DjangoApiClient) {
     }
 
     BackHandler(enabled = authenticated && currentScreen != AppScreen.DASHBOARD) {
-        viewModel.navigateTo(AppScreen.DASHBOARD)
+        if (currentScreen in moreScreens) {
+            viewModel.navigateTo(AppScreen.OPERATIONS)
+        } else {
+            viewModel.navigateTo(AppScreen.DASHBOARD)
+        }
     }
 
     LaunchedEffect(authenticated, permissions, currentScreen) {
         val canAccessScreen = authenticated && when (currentScreen) {
             AppScreen.DASHBOARD -> true
+            AppScreen.OPERATIONS -> true
             AppScreen.ROLL_CALL -> permissions.rollCall
             AppScreen.EXEATS -> permissions.exeatsView
             AppScreen.REPORTS_SYNC -> permissions.isAdmin
@@ -284,47 +290,30 @@ fun SHSAppRoot(viewModel: MainViewModel, apiClient: DjangoApiClient) {
                     )
                 }
 
+                val isOperationsSelected = currentScreen == AppScreen.OPERATIONS || currentScreen in moreScreens
                 NavigationBarItem(
-                    selected = currentScreen in moreScreens,
-                    onClick = { moreMenuExpanded = true },
+                    selected = isOperationsSelected,
+                    onClick = { viewModel.navigateTo(AppScreen.OPERATIONS) },
                     icon = {
-                        Box {
-                            AnimatedNavigationIcon(currentScreen in moreScreens) {
-                                if (unreadNotificationCount > 0) {
-                                    BadgedBox(
-                                        badge = {
-                                            Badge {
-                                                Text(
-                                                    unreadNotificationCount.coerceAtMost(99)
-                                                        .toString()
-                                                )
-                                            }
+                        AnimatedNavigationIcon(isOperationsSelected) {
+                            if (unreadNotificationCount > 0) {
+                                BadgedBox(
+                                    badge = {
+                                        Badge {
+                                            Text(
+                                                unreadNotificationCount.coerceAtMost(99).toString()
+                                            )
                                         }
-                                    ) {
-                                        Icon(Icons.Default.MoreHoriz, contentDescription = "More screens")
                                     }
-                                } else {
-                                    Icon(Icons.Default.MoreHoriz, contentDescription = "More screens")
+                                ) {
+                                    Icon(Icons.Default.MoreHoriz, contentDescription = "Operations")
                                 }
-                            }
-                            DropdownMenu(
-                                expanded = moreMenuExpanded,
-                                onDismissRequest = { moreMenuExpanded = false }
-                            ) {
-                                moreItems.forEach { (screen, item) ->
-                                    DropdownMenuItem(
-                                        text = { Text(item.first) },
-                                        leadingIcon = { Icon(item.second, contentDescription = null) },
-                                        onClick = {
-                                            viewModel.navigateTo(screen)
-                                            moreMenuExpanded = false
-                                        }
-                                    )
-                                }
+                            } else {
+                                Icon(Icons.Default.MoreHoriz, contentDescription = "Operations")
                             }
                         }
                     },
-                    label = { Text("More", style = androidx.compose.material3.MaterialTheme.typography.labelSmall) },
+                    label = { Text("Operations", style = androidx.compose.material3.MaterialTheme.typography.labelSmall) },
                     colors = navigationItemColors()
                 )
             }
@@ -345,6 +334,7 @@ fun SHSAppRoot(viewModel: MainViewModel, apiClient: DjangoApiClient) {
             ) { screen ->
                 val canRenderScreen = when (screen) {
                     AppScreen.DASHBOARD -> true
+                    AppScreen.OPERATIONS -> true
                     AppScreen.ROLL_CALL -> permissions.rollCall
                     AppScreen.EXEATS -> permissions.exeatsView
                     AppScreen.REPORTS_SYNC -> permissions.isAdmin
@@ -365,6 +355,7 @@ fun SHSAppRoot(viewModel: MainViewModel, apiClient: DjangoApiClient) {
                         AppScreen.GATE_CHECK -> GateCheckScreen(viewModel = viewModel)
                         AppScreen.STUDENTS -> StudentDirectoryScreen(viewModel = viewModel)
                         AppScreen.DORMS -> DormOccupancyScreen(viewModel = viewModel)
+                        AppScreen.OPERATIONS -> OperationsHubScreen(viewModel = viewModel)
                         AppScreen.ROLL_CALL_HISTORY -> RollCallHistoryScreen(viewModel = viewModel)
                         AppScreen.NOTIFICATIONS -> NotificationsScreen(viewModel = viewModel)
                         AppScreen.REPORTS_SYNC -> ReportsAuditScreen(viewModel = viewModel)

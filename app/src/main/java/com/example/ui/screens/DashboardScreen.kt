@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material.icons.filled.MeetingRoom
 import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -144,53 +145,195 @@ fun DashboardScreen(
             }
         }
 
-        // Quick Role Actions
+        // Contextual Operational Tasks
         item {
             Text(
-                text = "Quick actions",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface
+                text = "OPERATIONAL TASKS",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.sp,
+                color = Color(0xFF64748B)
             )
             Spacer(modifier = Modifier.height(10.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                QuickActionButton(
-                    icon = Icons.Default.Checklist,
-                    label = "Roll Call",
-                    color = NavyPrimary,
-                    modifier = Modifier.weight(1f),
-                    onClick = { viewModel.navigateTo(AppScreen.ROLL_CALL) }
-                )
-                QuickActionButton(
-                    icon = Icons.Default.QrCodeScanner,
-                    label = "Scan QR",
-                    color = GoldAccent,
-                    modifier = Modifier.weight(1f),
-                    onClick = { viewModel.navigateTo(AppScreen.GATE_CHECK) }
-                )
-            }
-            Spacer(modifier = Modifier.height(10.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                QuickActionButton(
-                    icon = Icons.Default.ExitToApp,
-                    label = "Exeats",
-                    badge = if (metrics.pendingExeats > 0) "${metrics.pendingExeats}" else null,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.weight(1f),
-                    onClick = { viewModel.navigateTo(AppScreen.EXEATS) }
-                )
-                QuickActionButton(
-                    icon = Icons.Default.Bed,
-                    label = "Dorms",
-                    color = EmeraldGreen,
-                    modifier = Modifier.weight(1f),
-                    onClick = { viewModel.navigateTo(AppScreen.DORMS) }
-                )
+
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Pending Exeats Task Card (if any pending)
+                if (metrics.pendingExeats > 0) {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { viewModel.navigateTo(AppScreen.EXEATS) },
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFFEF3C7)),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .clip(CircleShape)
+                                        .background(AmberWarning.copy(alpha = 0.2f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ExitToApp,
+                                        contentDescription = null,
+                                        tint = Color(0xFFB45309),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column {
+                                    Text(
+                                        text = "${metrics.pendingExeats} Pending Exeat Requests",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        color = Color(0xFF78350F)
+                                    )
+                                    Text(
+                                        text = "Awaiting duty housemaster review & clearance",
+                                        fontSize = 11.sp,
+                                        color = Color(0xFF92400E)
+                                    )
+                                }
+                            }
+                            Text(
+                                text = "Review →",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFFB45309)
+                            )
+                        }
+                    }
+                }
+
+                // Daily Roll Call Task Card
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { viewModel.navigateTo(AppScreen.ROLL_CALL) },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(NavyPrimary.copy(alpha = 0.1f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Checklist,
+                                    contentDescription = null,
+                                    tint = NavyPrimary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column {
+                                Text(
+                                    text = "Dormitory Roll Call Inspection",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = NavyPrimary
+                                )
+                                Text(
+                                    text = "Inspect bed allocations and mark attendance",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF64748B)
+                                )
+                            }
+                        }
+                        Text(
+                            text = "Start →",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = NavyPrimary
+                        )
+                    }
+                }
+
+                // Flagged Absentees Alert Card (if any absent)
+                if (metrics.unexcusedAbsent > 0) {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { viewModel.navigateTo(AppScreen.ROLL_CALL) },
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFFEE2E2)),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .clip(CircleShape)
+                                        .background(CrimsonAlert.copy(alpha = 0.2f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Warning,
+                                        contentDescription = null,
+                                        tint = CrimsonAlert,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column {
+                                    Text(
+                                        text = "${metrics.unexcusedAbsent} Unexcused Absence Flagged",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        color = CrimsonAlert
+                                    )
+                                    Text(
+                                        text = "Follow up with housemaster & parent inquiry",
+                                        fontSize = 11.sp,
+                                        color = Color(0xFF991B1B)
+                                    )
+                                }
+                            }
+                            Text(
+                                text = "View →",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = CrimsonAlert
+                            )
+                        }
+                    }
+                }
             }
         }
 

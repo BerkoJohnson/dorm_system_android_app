@@ -300,11 +300,38 @@ fun RollCallScreen(
                     .padding(horizontal = 14.dp, vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(
-                    text = "${roomStudents.size} students in dormitory",
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 13.sp
+                val accountedCount = presentCount + exeatCount + sickCount
+                val totalCount = roomStudents.size.coerceAtLeast(1)
+                val fraction = (accountedCount.toFloat() / totalCount).coerceIn(0f, 1f)
+                val percent = (fraction * 100).toInt()
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "${roomStudents.size} Students in Dormitory",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp
+                    )
+                    Text(
+                        text = "$accountedCount/${roomStudents.size} ($percent%)",
+                        color = GoldAccent,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp
+                    )
+                }
+
+                androidx.compose.material3.LinearProgressIndicator(
+                    progress = { fraction },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(6.dp)
+                        .clip(RoundedCornerShape(3.dp)),
+                    color = EmeraldGreen,
+                    trackColor = Color(0xFF1E293B)
                 )
                 Row(
                     modifier = Modifier.fillMaxWidth(),

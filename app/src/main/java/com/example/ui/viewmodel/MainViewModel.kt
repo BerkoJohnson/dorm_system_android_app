@@ -40,6 +40,7 @@ enum class AppScreen {
     ROLL_CALL,
     EXEATS,
     GATE_CHECK,
+    OPERATIONS,
     STUDENTS,
     DORMS,
     ROLL_CALL_HISTORY,
