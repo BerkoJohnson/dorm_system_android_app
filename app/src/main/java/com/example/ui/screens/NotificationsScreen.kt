@@ -22,6 +22,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -44,6 +45,9 @@ fun NotificationsScreen(
     modifier: Modifier = Modifier
 ) {
     val notifications by viewModel.notifications.collectAsStateWithLifecycle()
+    val isLoading by viewModel.isLoadingNotifications.collectAsStateWithLifecycle()
+    val hasMore by viewModel.hasMoreNotifications.collectAsStateWithLifecycle()
+    val message by viewModel.notificationMessage.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) {
         viewModel.loadNotifications()
@@ -75,23 +79,38 @@ fun NotificationsScreen(
             }
         }
 
+        if (message != null) {
+            Text(message.orEmpty(), color = Color(0xFFB91C1C), fontSize = 12.sp)
+        }
+
         if (notifications.isEmpty()) {
             Box(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.weight(1f).fillMaxWidth(),
                 contentAlignment = Alignment.Center
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(
-                        imageVector = Icons.Default.Notifications,
-                        contentDescription = null,
-                        tint = Color(0xFF94A3B8),
-                        modifier = Modifier.size(40.dp)
-                    )
-                    Text(
-                        text = "No notifications to show.",
-                        color = Color(0xFF64748B),
-                        modifier = Modifier.padding(top = 8.dp)
-                    )
+                    if (isLoading) {
+                        CircularProgressIndicator()
+                    } else if (message == null) {
+                        Icon(
+                            imageVector = Icons.Default.Notifications,
+                            contentDescription = null,
+                            tint = Color(0xFF94A3B8),
+                            modifier = Modifier.size(40.dp)
+                        )
+                        Text(
+                            text = "No notifications to show.",
+                            color = Color(0xFF64748B),
+                            modifier = Modifier.padding(top = 8.dp)
+                        )
+                    } else {
+                        Button(
+                            onClick = viewModel::loadNotifications,
+                            colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary)
+                        ) {
+                            Text("Retry")
+                        }
+                    }
                 }
             }
         } else {
@@ -158,6 +177,26 @@ fun NotificationsScreen(
                                     maxLines = 2,
                                     overflow = TextOverflow.Ellipsis
                                 )
+                            }
+                        }
+                    }
+
+                    if (hasMore || (isLoading && notifications.isNotEmpty())) {
+                        Button(
+                            onClick = viewModel::loadMoreNotifications,
+                            enabled = !isLoading,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary)
+                        ) {
+                            if (isLoading) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    color = Color.White,
+                                    strokeWidth = 2.dp
+                                )
+                                Text("Loading...", modifier = Modifier.padding(start = 8.dp), fontSize = 12.sp)
+                            } else {
+                                Text("Load more notifications", fontSize = 12.sp)
                             }
                         }
                     }

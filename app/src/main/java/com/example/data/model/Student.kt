@@ -19,5 +19,7 @@ data class Student(
     val guardianRelationship: String,
     val status: String = "IN_DORM", // "IN_DORM", "ON_EXEAT", "SICK_BAY", "ABSENT"
     val qrCodeKey: String, // Verification token embedded in QR
-    val emergencyNotes: String = "None"
+    val emergencyNotes: String = "None",
+    val assignedRoomId: String? = null,
+    val assignedRoomName: String = ""
 )

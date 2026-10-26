@@ -227,6 +227,7 @@ class DjangoDataSync(
         val id = json.optString("id").takeIf(String::isNotBlank) ?: return null
         val house = json.optJSONObject("house")
         val dormitory = json.optJSONObject("dormitory")
+        val room = json.optJSONObject("room")
         val classGroup = json.optJSONObject("class_group")
         val guardian = json.optJSONObject("guardian")
         val isActiveExeat = json.optBoolean("is_active_exeat")
@@ -254,7 +255,10 @@ class DjangoDataSync(
             qrCodeKey = json.optString("public_token").takeUnless {
                 it.isBlank() || it == "null"
             }.orEmpty(),
-            emergencyNotes = ""
+            emergencyNotes = "",
+            assignedRoomId = room?.optString("id")
+                ?.takeUnless { it.isBlank() || it == "null" },
+            assignedRoomName = room?.optString("name").orEmpty()
         )
     }
 

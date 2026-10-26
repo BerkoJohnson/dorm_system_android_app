@@ -253,12 +253,14 @@ class DjangoApiClient(context: Context) {
                     }
                 )
             }
-            return envelope.optJSONObject("data")
+            val data = envelope.optJSONObject("data")
                 ?: when (val data = envelope.opt("data")) {
                     is JSONObject -> data
                     is JSONArray -> JSONObject().put("items", data)
                     else -> JSONObject()
                 }
+            envelope.optJSONObject("pagination")?.let { data.put("pagination", it) }
+            return data
         }
     }
 

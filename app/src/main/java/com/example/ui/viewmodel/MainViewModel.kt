@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.model.AttendanceRecord
 import com.example.data.model.AuditLog
+import com.example.data.model.BedSpace
 import com.example.data.model.ExeatRequest
 import com.example.data.model.GateMovement
 import com.example.data.model.House
@@ -35,6 +36,8 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+private const val LIST_PAGE_SIZE = 100
+
 enum class AppScreen {
     DASHBOARD,
     ROLL_CALL,
@@ -61,14 +64,18 @@ data class DashboardMetrics(
 
 data class ApiPermissions(
     val isAdmin: Boolean = false,
+    val isSeniorHousemaster: Boolean = false,
     val houseId: String? = null,
     val studentsView: Boolean = false,
+    val studentsManage: Boolean = false,
     val exeatsView: Boolean = false,
     val exeatsCreate: Boolean = false,
     val exeatsApprove: Boolean = false,
     val gateOperate: Boolean = false,
     val rollCall: Boolean = false,
     val reports: Boolean = false,
+    val auditView: Boolean = false,
+    val smsDispatchEnabled: Boolean = false,
     val exeatReview: Boolean = false
 )
 
@@ -131,6 +138,8 @@ class MainViewModel(
 
     private val _apiPermissions = MutableStateFlow(ApiPermissions())
     val apiPermissions: StateFlow<ApiPermissions> = _apiPermissions.asStateFlow()
+    private val _bedSpaces = MutableStateFlow<List<BedSpace>>(emptyList())
+    val bedSpaces: StateFlow<List<BedSpace>> = _bedSpaces.asStateFlow()
 
     val houses: StateFlow<List<House>> = repository.allHouses
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -191,10 +200,22 @@ class MainViewModel(
 
     private val _notifications = MutableStateFlow<List<MobileNotification>>(emptyList())
     val notifications: StateFlow<List<MobileNotification>> = _notifications.asStateFlow()
+    private val _isLoadingNotifications = MutableStateFlow(false)
+    val isLoadingNotifications: StateFlow<Boolean> = _isLoadingNotifications.asStateFlow()
+    private val _hasMoreNotifications = MutableStateFlow(false)
+    val hasMoreNotifications: StateFlow<Boolean> = _hasMoreNotifications.asStateFlow()
+    private val _notificationMessage = MutableStateFlow<String?>(null)
+    val notificationMessage: StateFlow<String?> = _notificationMessage.asStateFlow()
     private val _unreadNotificationCount = MutableStateFlow(0)
     val unreadNotificationCount: StateFlow<Int> = _unreadNotificationCount.asStateFlow()
+    private var notificationPage = 1
     private val _rollCallSessions = MutableStateFlow<List<RollCallSessionItem>>(emptyList())
     val rollCallSessions: StateFlow<List<RollCallSessionItem>> = _rollCallSessions.asStateFlow()
+    private val _isLoadingRollCallHistory = MutableStateFlow(false)
+    val isLoadingRollCallHistory: StateFlow<Boolean> = _isLoadingRollCallHistory.asStateFlow()
+    private val _hasMoreRollCallHistory = MutableStateFlow(false)
+    val hasMoreRollCallHistory: StateFlow<Boolean> = _hasMoreRollCallHistory.asStateFlow()
+    private var rollCallHistoryPage = 1
     private val _rollCallEntries = MutableStateFlow<List<RollCallEntryItem>>(emptyList())
     val rollCallEntries: StateFlow<List<RollCallEntryItem>> = _rollCallEntries.asStateFlow()
     private val _selectedRollCallSession = MutableStateFlow<RollCallSessionItem?>(null)
@@ -220,17 +241,26 @@ class MainViewModel(
         val houseId = capabilities?.optString("house_id")
             ?.takeUnless { it.isBlank() || it == "null" }
         val isAdmin = capabilities?.optBoolean("is_admin") == true
+        val isSeniorHousemaster =
+            capabilities?.optBoolean("is_senior_housemaster") == true
+        val advancedReportsEnabled =
+            features?.optBoolean("advanced_reports", true) ?: true
         return ApiPermissions(
             isAdmin = isAdmin,
+            isSeniorHousemaster = isSeniorHousemaster,
             houseId = houseId,
             studentsView = capabilities?.optBoolean("students_view") == true,
+            studentsManage = capabilities?.optBoolean("students_manage") == true,
             exeatsView = capabilities?.optBoolean("exeats_view") == true && exeatFeatureEnabled,
             exeatsCreate = capabilities?.optBoolean("exeats_create") == true && exeatFeatureEnabled,
             exeatsApprove = capabilities?.optBoolean("exeats_approve") == true && exeatFeatureEnabled,
             gateOperate = capabilities?.optBoolean("gate_operate") == true && exeatFeatureEnabled,
             rollCall = capabilities?.optBoolean("roll_call") == true && rollCallFeatureEnabled,
             reports = capabilities?.optBoolean("reports") == true &&
-                (features?.optBoolean("advanced_reports", true) ?: true),
+                advancedReportsEnabled,
+            auditView = (isAdmin || isSeniorHousemaster) && advancedReportsEnabled,
+            smsDispatchEnabled = isAdmin &&
+                (features?.optBoolean("sms_dispatch", false) ?: false),
             exeatReview = capabilities?.optBoolean("is_admin") == true ||
                 capabilities?.optBoolean("is_senior_housemaster") == true
         )
@@ -243,12 +273,20 @@ class MainViewModel(
                 repository.clearSessionData()
             }
             _apiPermissions.value = ApiPermissions()
+            _bedSpaces.value = emptyList()
             _currentRole.value = UserRole.HOUSEMASTER
             _selectedHouseId.value = null
             _serverDashboardMetrics.value = null
             _notifications.value = emptyList()
+            _isLoadingNotifications.value = false
+            _hasMoreNotifications.value = false
+            _notificationMessage.value = null
             _unreadNotificationCount.value = 0
+            notificationPage = 1
             _rollCallSessions.value = emptyList()
+            _isLoadingRollCallHistory.value = false
+            _hasMoreRollCallHistory.value = false
+            rollCallHistoryPage = 1
             _rollCallEntries.value = emptyList()
             _selectedRollCallSession.value = null
             _rollCallHistoryMessage.value = null
@@ -263,9 +301,17 @@ class MainViewModel(
             repository.clearSessionData()
         }
         _serverDashboardMetrics.value = null
+        _bedSpaces.value = emptyList()
         _notifications.value = emptyList()
+        _isLoadingNotifications.value = false
+        _hasMoreNotifications.value = false
+        _notificationMessage.value = null
         _unreadNotificationCount.value = 0
+        notificationPage = 1
         _rollCallSessions.value = emptyList()
+        _isLoadingRollCallHistory.value = false
+        _hasMoreRollCallHistory.value = false
+        rollCallHistoryPage = 1
         _rollCallEntries.value = emptyList()
         _selectedRollCallSession.value = null
         _gateScanResult.value = null
@@ -280,39 +326,130 @@ class MainViewModel(
         _selectedHouseId.value = houseId
     }
 
-    fun loadNotifications() {
+    fun loadBedSpaces() {
         viewModelScope.launch {
             try {
-                val response = apiClient.get(
-                    "notifications/",
-                    mapOf("page" to "1", "page_size" to "100")
-                )
-                val items = response.optJSONArray("items") ?: JSONArray()
-                _notifications.value = (0 until items.length()).mapNotNull { index ->
-                    val json = items.optJSONObject(index) ?: return@mapNotNull null
-                    val id = json.optString("id").takeIf(String::isNotBlank)
+                val response = apiClient.get("students/options/")
+                val rooms = response.optJSONArray("rooms") ?: JSONArray()
+                _bedSpaces.value = (0 until rooms.length()).mapNotNull { index ->
+                    val room = rooms.optJSONObject(index) ?: return@mapNotNull null
+                    val id = room.optString("id").takeIf(String::isNotBlank)
                         ?: return@mapNotNull null
-                    MobileNotification(
+                    val dormitoryId = room.optString("dormitory_id")
+                        .takeIf(String::isNotBlank) ?: return@mapNotNull null
+                    BedSpace(
                         id = id,
-                        title = json.optString("title", "School notification"),
-                        message = json.optString("message"),
-                        kind = json.optString("kind_display", json.optString("kind")),
-                        createdAt = json.optString("created_at"),
-                        isRead = json.optBoolean("is_read")
+                        dormitoryId = dormitoryId,
+                        name = room.optString("name"),
+                        capacity = room.optInt("capacity")
                     )
                 }
+            } catch (error: IOException) {
+                syncManager.reportActionError("Could not load room options: ${error.message}")
+            } catch (error: IllegalStateException) {
+                syncManager.reportActionError("Could not load room options: ${error.message}")
+            }
+        }
+    }
+
+    fun reassignStudentRoom(student: Student, bedSpace: BedSpace) {
+        viewModelScope.launch {
+            remoteAction("Student room allocation updated") {
+                apiClient.post(
+                    "students/${student.id}/allocation/",
+                    JSONObject()
+                        .put("dormitory_id", bedSpace.dormitoryId)
+                        .put("room_id", bedSpace.id)
+                )
+            }
+        }
+    }
+
+    fun loadNotifications() {
+        if (_isLoadingNotifications.value) return
+        notificationPage = 1
+        _notifications.value = emptyList()
+        _hasMoreNotifications.value = false
+        _notificationMessage.value = null
+        _isLoadingNotifications.value = true
+        viewModelScope.launch {
+            try {
+                val response = fetchListPage("notifications/", notificationPage)
+                val items = response.optJSONArray("items") ?: JSONArray()
+                _notifications.value = parseNotifications(items)
+                _hasMoreNotifications.value = hasNextPage(response, items)
                 val me = apiClient.get("auth/me/")
                 val unread = me.optJSONObject("unread")
                 _unreadNotificationCount.value =
                     (unread?.optInt("notifications") ?: 0) +
                     (unread?.optInt("roll_call_notifications") ?: 0)
             } catch (error: IOException) {
-                syncManager.reportActionError("Could not load notifications: ${error.message}")
+                _notificationMessage.value = "Could not load notifications: ${error.message}"
+                syncManager.reportActionError(_notificationMessage.value.orEmpty())
             } catch (error: IllegalStateException) {
-                syncManager.reportActionError("Could not load notifications: ${error.message}")
+                _notificationMessage.value = "Could not load notifications: ${error.message}"
+                syncManager.reportActionError(_notificationMessage.value.orEmpty())
+            } finally {
+                _isLoadingNotifications.value = false
             }
         }
     }
+
+    fun loadMoreNotifications() {
+        if (_isLoadingNotifications.value || !_hasMoreNotifications.value) return
+        val nextPage = notificationPage + 1
+        _isLoadingNotifications.value = true
+        _notificationMessage.value = null
+        viewModelScope.launch {
+            try {
+                val response = fetchListPage("notifications/", nextPage)
+                val items = response.optJSONArray("items") ?: JSONArray()
+                _notifications.value = mergeById(
+                    _notifications.value,
+                    parseNotifications(items),
+                    MobileNotification::id
+                )
+                notificationPage = nextPage
+                _hasMoreNotifications.value = hasNextPage(response, items)
+            } catch (error: IOException) {
+                _notificationMessage.value = "Could not load more notifications: ${error.message}"
+                syncManager.reportActionError(_notificationMessage.value.orEmpty())
+            } catch (error: IllegalStateException) {
+                _notificationMessage.value = "Could not load more notifications: ${error.message}"
+                syncManager.reportActionError(_notificationMessage.value.orEmpty())
+            } finally {
+                _isLoadingNotifications.value = false
+            }
+        }
+    }
+
+    private suspend fun fetchListPage(path: String, page: Int): JSONObject =
+        apiClient.get(
+            path,
+            mapOf("page" to page.toString(), "page_size" to LIST_PAGE_SIZE.toString())
+        )
+
+    private fun hasNextPage(response: JSONObject, items: JSONArray): Boolean =
+        response.optJSONObject("pagination")?.let { it.optBoolean("has_next") }
+            ?: (items.length() == LIST_PAGE_SIZE)
+
+    private fun parseNotifications(items: JSONArray): List<MobileNotification> =
+        (0 until items.length()).mapNotNull { index ->
+            val json = items.optJSONObject(index) ?: return@mapNotNull null
+            val id = json.optString("id").takeIf(String::isNotBlank)
+                ?: return@mapNotNull null
+            MobileNotification(
+                id = id,
+                title = json.optString("title", "School notification"),
+                message = json.optString("message"),
+                kind = json.optString("kind_display", json.optString("kind")),
+                createdAt = json.optString("created_at"),
+                isRead = json.optBoolean("is_read")
+            )
+        }
+
+    private fun <T> mergeById(existing: List<T>, incoming: List<T>, id: (T) -> String): List<T> =
+        (existing + incoming).distinctBy(id)
 
     fun markNotificationRead(notificationId: String) {
         viewModelScope.launch {
@@ -344,40 +481,74 @@ class MainViewModel(
     }
 
     fun loadRollCallHistory() {
+        if (_isLoadingRollCallHistory.value) return
+        rollCallHistoryPage = 1
+        _rollCallSessions.value = emptyList()
+        _hasMoreRollCallHistory.value = false
+        _rollCallHistoryMessage.value = null
+        _isLoadingRollCallHistory.value = true
         viewModelScope.launch {
             try {
-                _rollCallHistoryMessage.value = null
-                val response = apiClient.get(
-                    "roll-call/sessions/",
-                    mapOf("page" to "1", "page_size" to "100")
-                )
+                val response = fetchListPage("roll-call/sessions/", rollCallHistoryPage)
                 val items = response.optJSONArray("items") ?: JSONArray()
-                _rollCallSessions.value = (0 until items.length()).mapNotNull { index ->
-                    val json = items.optJSONObject(index) ?: return@mapNotNull null
-                    val id = json.optString("id").takeIf(String::isNotBlank)
-                        ?: return@mapNotNull null
-                    val counts = json.optJSONObject("counts") ?: JSONObject()
-                    RollCallSessionItem(
-                        id = id,
-                        sessionType = json.optString("session_type_display", json.optString("session_type")),
-                        date = json.optString("date"),
-                        status = json.optString("status_display", json.optString("status")),
-                        dormitory = json.optJSONObject("dormitory")?.optString("name").orEmpty(),
-                        total = counts.optInt("total_students"),
-                        present = counts.optInt("present"),
-                        absent = counts.optInt("absent"),
-                        onExeat = counts.optInt("on_exeat"),
-                        infirmary = counts.optInt("infirmary"),
-                        unmarked = counts.optInt("unmarked")
-                    )
-                }
+                _rollCallSessions.value = parseRollCallSessions(items)
+                _hasMoreRollCallHistory.value = hasNextPage(response, items)
             } catch (error: IOException) {
                 _rollCallHistoryMessage.value = "Could not load roll-call history: ${error.message}"
             } catch (error: IllegalStateException) {
                 _rollCallHistoryMessage.value = "Could not load roll-call history: ${error.message}"
+            } finally {
+                _isLoadingRollCallHistory.value = false
             }
         }
     }
+
+    fun loadMoreRollCallHistory() {
+        if (_isLoadingRollCallHistory.value || !_hasMoreRollCallHistory.value) return
+        val nextPage = rollCallHistoryPage + 1
+        _isLoadingRollCallHistory.value = true
+        _rollCallHistoryMessage.value = null
+        viewModelScope.launch {
+            try {
+                val response = fetchListPage("roll-call/sessions/", nextPage)
+                val items = response.optJSONArray("items") ?: JSONArray()
+                _rollCallSessions.value = mergeById(
+                    _rollCallSessions.value,
+                    parseRollCallSessions(items),
+                    RollCallSessionItem::id
+                )
+                rollCallHistoryPage = nextPage
+                _hasMoreRollCallHistory.value = hasNextPage(response, items)
+            } catch (error: IOException) {
+                _rollCallHistoryMessage.value = "Could not load more roll-call history: ${error.message}"
+            } catch (error: IllegalStateException) {
+                _rollCallHistoryMessage.value = "Could not load more roll-call history: ${error.message}"
+            } finally {
+                _isLoadingRollCallHistory.value = false
+            }
+        }
+    }
+
+    private fun parseRollCallSessions(items: JSONArray): List<RollCallSessionItem> =
+        (0 until items.length()).mapNotNull { index ->
+            val json = items.optJSONObject(index) ?: return@mapNotNull null
+            val id = json.optString("id").takeIf(String::isNotBlank)
+                ?: return@mapNotNull null
+            val counts = json.optJSONObject("counts") ?: JSONObject()
+            RollCallSessionItem(
+                id = id,
+                sessionType = json.optString("session_type_display", json.optString("session_type")),
+                date = json.optString("date"),
+                status = json.optString("status_display", json.optString("status")),
+                dormitory = json.optJSONObject("dormitory")?.optString("name").orEmpty(),
+                total = counts.optInt("total_students"),
+                present = counts.optInt("present"),
+                absent = counts.optInt("absent"),
+                onExeat = counts.optInt("on_exeat"),
+                infirmary = counts.optInt("infirmary"),
+                unmarked = counts.optInt("unmarked")
+            )
+        }
 
     fun openRollCallSession(session: RollCallSessionItem) {
         viewModelScope.launch {
@@ -795,12 +966,20 @@ class MainViewModel(
                     repository.clearSessionData()
                 }
                 _apiPermissions.value = ApiPermissions()
+                _bedSpaces.value = emptyList()
                 _currentRole.value = UserRole.HOUSEMASTER
                 _selectedHouseId.value = null
                 _serverDashboardMetrics.value = null
                 _notifications.value = emptyList()
+                _isLoadingNotifications.value = false
+                _hasMoreNotifications.value = false
+                _notificationMessage.value = null
                 _unreadNotificationCount.value = 0
+                notificationPage = 1
                 _rollCallSessions.value = emptyList()
+                _isLoadingRollCallHistory.value = false
+                _hasMoreRollCallHistory.value = false
+                rollCallHistoryPage = 1
                 _rollCallEntries.value = emptyList()
                 _selectedRollCallSession.value = null
                 _rollCallHistoryMessage.value = null

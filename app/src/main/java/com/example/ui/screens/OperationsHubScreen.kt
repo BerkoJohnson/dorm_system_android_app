@@ -101,8 +101,8 @@ fun OperationsHubScreen(
             HubNavigationCard(
                 icon = Icons.Default.Bed,
                 iconTint = EdenBrightGreen,
-                title = "Dormitory Capacity & Bed Spaces",
-                subtitle = "${rooms.size} Dorm Rooms • Bed Reallocation & Inspection",
+                title = "Dormitory Occupancy",
+                subtitle = "${rooms.size} Dorm Rooms • View assigned bed spaces",
                 badge = "${rooms.size} Rooms",
                 onClick = { viewModel.navigateTo(AppScreen.DORMS) }
             )
@@ -120,15 +120,15 @@ fun OperationsHubScreen(
             )
         }
 
-        // SMS Notifications & Dispatch
+        // School notifications
         item {
             val count = notifications.size
             HubNavigationCard(
                 icon = Icons.Default.Notifications,
                 iconTint = Color(0xFFD97706),
-                title = "Parent SMS & Alerts",
-                subtitle = "$count Messages Logged • Automated Exeat Notifications",
-                badge = if (count > 0) "$count Sent" else "SMS Ready",
+                title = "School Notifications",
+                subtitle = "View alerts and mark them as read",
+                badge = if (count > 0) "$count Loaded" else "Alerts",
                 onClick = { viewModel.navigateTo(AppScreen.NOTIFICATIONS) }
             )
         }

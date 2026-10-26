@@ -354,7 +354,10 @@ fun SHSAppRoot(viewModel: MainViewModel, apiClient: DjangoApiClient) {
                         )
                         AppScreen.GATE_CHECK -> GateCheckScreen(viewModel = viewModel)
                         AppScreen.STUDENTS -> StudentDirectoryScreen(viewModel = viewModel)
-                        AppScreen.DORMS -> DormOccupancyScreen(viewModel = viewModel)
+                        AppScreen.DORMS -> DormOccupancyScreen(
+                            viewModel = viewModel,
+                            canManageAllocations = permissions.studentsManage
+                        )
                         AppScreen.OPERATIONS -> OperationsHubScreen(viewModel = viewModel)
                         AppScreen.ROLL_CALL_HISTORY -> RollCallHistoryScreen(viewModel = viewModel)
                         AppScreen.NOTIFICATIONS -> NotificationsScreen(viewModel = viewModel)

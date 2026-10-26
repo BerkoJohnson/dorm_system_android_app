@@ -20,6 +20,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -53,6 +54,8 @@ fun RollCallHistoryScreen(
     val sessions by viewModel.rollCallSessions.collectAsStateWithLifecycle()
     val selectedSession by viewModel.selectedRollCallSession.collectAsStateWithLifecycle()
     val message by viewModel.rollCallHistoryMessage.collectAsStateWithLifecycle()
+    val isLoading by viewModel.isLoadingRollCallHistory.collectAsStateWithLifecycle()
+    val hasMore by viewModel.hasMoreRollCallHistory.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) {
         viewModel.loadRollCallHistory()
@@ -78,11 +81,25 @@ fun RollCallHistoryScreen(
             )
         }
         if (sessions.isEmpty()) {
-            Text(
-                text = "No roll-call sessions are available, or the server has not returned them yet.",
-                color = Color(0xFF64748B),
-                fontSize = 13.sp
-            )
+            Column(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                if (isLoading) {
+                    CircularProgressIndicator()
+                } else if (message == null) {
+                    Text(
+                        text = "No roll-call sessions are available.",
+                        color = Color(0xFF64748B),
+                        fontSize = 13.sp
+                    )
+                } else {
+                    Button(onClick = viewModel::loadRollCallHistory) {
+                        Text("Retry")
+                    }
+                }
+            }
         } else {
             LazyColumn(
                 modifier = Modifier.weight(1f),
@@ -130,6 +147,23 @@ fun RollCallHistoryScreen(
                                 fontSize = 11.sp,
                                 color = Color(0xFF334155)
                             )
+                        }
+                    }
+                    }
+                    if (sessions.isNotEmpty() && (hasMore || isLoading)) {
+                    Button(
+                        onClick = viewModel::loadMoreRollCallHistory,
+                        enabled = !isLoading,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        if (isLoading) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.padding(end = 8.dp),
+                                strokeWidth = 2.dp
+                            )
+                            Text("Loading...")
+                        } else {
+                            Text("Load more sessions")
                         }
                     }
                     }

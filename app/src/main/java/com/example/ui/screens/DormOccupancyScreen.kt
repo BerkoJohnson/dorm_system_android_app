@@ -33,6 +33,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -47,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.model.House
+import com.example.data.model.BedSpace
 import com.example.data.model.RoomEntity
 import com.example.data.model.Student
 import com.example.ui.theme.AmberWarning
@@ -58,42 +60,74 @@ import com.example.ui.viewmodel.MainViewModel
 @Composable
 fun DormOccupancyScreen(
     viewModel: MainViewModel,
+    canManageAllocations: Boolean,
     modifier: Modifier = Modifier
 ) {
     val houses by viewModel.houses.collectAsStateWithLifecycle()
     val rooms by viewModel.rooms.collectAsStateWithLifecycle()
     val students by viewModel.students.collectAsStateWithLifecycle()
+    val bedSpaces by viewModel.bedSpaces.collectAsStateWithLifecycle()
+    var selectedStudent by remember { mutableStateOf<Student?>(null) }
 
-    LazyColumn(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        item {
-            Text(
-                text = "DORMITORY CAPACITY & ALLOCATIONS",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 1.sp,
-                color = Color(0xFF64748B)
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = "Monitor server-reported house and dormitory capacity. Bed-level placement editing is not available through the mobile API.",
-                fontSize = 12.sp,
-                color = Color(0xFF64748B)
-            )
+    LaunchedEffect(canManageAllocations) {
+        if (canManageAllocations) viewModel.loadBedSpaces()
+    }
+
+    Box(modifier = modifier.fillMaxSize()) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            item {
+                Text(
+                    text = "DORMITORY CAPACITY & ALLOCATIONS",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp,
+                    color = Color(0xFF64748B)
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = if (canManageAllocations) {
+                        "Review house and dormitory capacity, then assign boarding students to rooms."
+                    } else {
+                        "Monitor server-reported house and dormitory capacity and room assignments."
+                    },
+                    fontSize = 12.sp,
+                    color = Color(0xFF64748B)
+                )
+            }
+
+            items(houses) { house ->
+                val houseRooms = rooms.filter { it.houseId == house.id }
+                val houseStudents = students.filter { it.houseId == house.id }
+
+                HouseDormSection(
+                    house = house,
+                    rooms = houseRooms,
+                    students = houseStudents,
+                    canManageAllocations = canManageAllocations,
+                    onAssign = { selectedStudent = it }
+                )
+            }
         }
 
-        items(houses) { house ->
-            val houseRooms = rooms.filter { it.houseId == house.id }
-            val houseStudents = students.filter { it.houseId == house.id }
-
-            HouseDormSection(
-                house = house,
-                rooms = houseRooms,
-                students = houseStudents
+        selectedStudent?.let { student ->
+            RoomAllocationDialog(
+                student = student,
+                bedSpaces = bedSpaces.filter { bedSpace ->
+                    rooms.any {
+                        it.houseId == student.houseId && it.id == bedSpace.dormitoryId
+                    }
+                },
+                students = students,
+                onDismiss = { selectedStudent = null },
+                onSelect = { bedSpace ->
+                    viewModel.reassignStudentRoom(student, bedSpace)
+                    selectedStudent = null
+                }
             )
         }
     }
@@ -103,7 +137,9 @@ fun DormOccupancyScreen(
 private fun HouseDormSection(
     house: House,
     rooms: List<RoomEntity>,
-    students: List<Student>
+    students: List<Student>,
+    canManageAllocations: Boolean,
+    onAssign: (Student) -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -217,21 +253,70 @@ private fun HouseDormSection(
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             Text(
-                                                text = occupant.fullName,
+                                                text = "${occupant.fullName}\n${occupant.assignedRoomName.ifBlank { "No room assigned" }}",
                                                 fontSize = 12.sp,
                                                 color = Color(0xFF334155),
-                                                maxLines = 1,
+                                                maxLines = 2,
                                                 overflow = TextOverflow.Ellipsis,
                                                 modifier = Modifier.weight(1f)
                                             )
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                            Text(
-                                                text = occupant.studentId,
-                                                fontSize = 10.sp,
-                                                color = Color(0xFF64748B),
-                                                maxLines = 1
-                                            )
+                                            if (canManageAllocations) {
+                                                TextButton(onClick = { onAssign(occupant) }) {
+                                                    Text("Assign room")
+                                                }
+                                            } else {
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                                Text(
+                                                    text = occupant.studentId,
+                                                    fontSize = 10.sp,
+                                                    color = Color(0xFF64748B),
+                                                    maxLines = 1
+                                                )
+                                            }
                                         }
+                                    }
+
+                                    @Composable
+                                    private fun RoomAllocationDialog(
+                                        student: Student,
+                                        bedSpaces: List<BedSpace>,
+                                        students: List<Student>,
+                                        onDismiss: () -> Unit,
+                                        onSelect: (BedSpace) -> Unit
+                                    ) {
+                                        AlertDialog(
+                                            onDismissRequest = onDismiss,
+                                            title = { Text("Assign room to ${student.fullName}") },
+                                            text = {
+                                                if (bedSpaces.isEmpty()) {
+                                                    Text("No rooms are available for this dormitory.")
+                                                } else {
+                                                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                        bedSpaces.forEach { bedSpace ->
+                                                            val occupancy = students.count {
+                                                                it.assignedRoomId == bedSpace.id
+                                                            }
+                                                            val isCurrent = student.assignedRoomId == bedSpace.id
+                                                            val isAvailable = occupancy < bedSpace.capacity || isCurrent
+                                                            TextButton(
+                                                                onClick = { onSelect(bedSpace) },
+                                                                enabled = isAvailable,
+                                                                modifier = Modifier.fillMaxWidth()
+                                                            ) {
+                                                                Text(
+                                                                    text = "${bedSpace.name} · $occupancy/${bedSpace.capacity}" +
+                                                                        if (isCurrent) " · Current" else "",
+                                                                    modifier = Modifier.fillMaxWidth()
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                            confirmButton = {
+                                                TextButton(onClick = onDismiss) { Text("Cancel") }
+                                            }
+                                        )
                                     }
                                 }
                             }
