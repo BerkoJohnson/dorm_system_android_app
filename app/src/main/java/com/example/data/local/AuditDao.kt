@@ -17,4 +17,7 @@ interface AuditDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAuditLogs(logs: List<AuditLog>)
+
+    @Query("DELETE FROM audit_logs")
+    suspend fun clear()
 }

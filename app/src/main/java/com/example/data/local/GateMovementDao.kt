@@ -20,4 +20,7 @@ interface GateMovementDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertMovements(movements: List<GateMovement>)
+
+    @Query("DELETE FROM gate_movements")
+    suspend fun clear()
 }

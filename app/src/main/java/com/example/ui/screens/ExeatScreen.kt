@@ -98,13 +98,11 @@ fun ExeatScreen(
     var approvalNotes by remember { mutableStateOf("") }
 
     val filteredExeats = when (selectedFilter) {
-        "PENDING" -> exeats.filter { it.status == "PENDING" }
-        "APPROVED" -> exeats.filter { it.status == "APPROVED" }
-        "DEPARTED" -> exeats.filter { it.status == "DEPARTED" }
-        "OVERDUE" -> exeats.filter {
-            it.status == "DEPARTED" && System.currentTimeMillis() > it.expectedReturnTime
+        "PENDING" -> exeats.filter { it.status in setOf("PENDING", "QUEUED") }
+        "FOLLOW_UP" -> exeats.filter { it.status in setOf("APPROVED", "DEPARTED") }
+        "HISTORY" -> exeats.filter {
+            it.status in setOf("RETURNED", "REJECTED", "CANCELLED")
         }
-        "RETURNED" -> exeats.filter { it.status == "RETURNED" }
         else -> exeats
     }
 
@@ -129,14 +127,11 @@ fun ExeatScreen(
         ) {
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Filter Chips
             val filterOptions = listOf(
-                "ALL" to "All (${exeats.size})",
-                "PENDING" to "Pending (${exeats.count { it.status == "PENDING" }})",
-                "APPROVED" to "Approved (${exeats.count { it.status == "APPROVED" }})",
-                "DEPARTED" to "Departed (${exeats.count { it.status == "DEPARTED" }})",
-                "OVERDUE" to "Overdue (${exeats.count { it.status == "DEPARTED" && System.currentTimeMillis() > it.expectedReturnTime }})",
-                "RETURNED" to "Returned (${exeats.count { it.status == "RETURNED" }})"
+                "ALL" to "All",
+                "PENDING" to "Pending",
+                "FOLLOW_UP" to "Follow-ups",
+                "HISTORY" to "History"
             )
 
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -152,9 +147,9 @@ fun ExeatScreen(
                         Text(
                             text = label,
                             color = if (isSelected) Color.White else Color(0xFF475569),
-                            fontSize = 12.sp,
+                            fontSize = 11.sp,
                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                         )
                     }
                 }
@@ -192,6 +187,12 @@ fun ExeatScreen(
                             onReject = {
                                 viewModel.loadExeatDetail(exeat) { detail, _ ->
                                     exeatToReject = detail
+                                }
+                            },
+                            onFollowUp = {
+                                viewModel.loadExeatDetail(exeat) { detail, workflow ->
+                                    selectedExeatForDetail = detail
+                                    selectedExeatWorkflow = workflow
                                 }
                             },
                             onClick = {
@@ -434,25 +435,26 @@ private fun ExeatCard(
     canApprove: Boolean,
     onApprove: () -> Unit,
     onReject: () -> Unit,
+    onFollowUp: () -> Unit,
     onClick: () -> Unit
 ) {
+    val isQueued = exeat.status == "QUEUED"
     val isOverdue = exeat.status == "DEPARTED" && System.currentTimeMillis() > exeat.expectedReturnTime
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onClick() },
+            .clickable(enabled = !isQueued) { onClick() },
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
-        Column(modifier = Modifier.padding(14.dp)) {
+        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Category & Pass ID
                 Row(
                     modifier = Modifier.weight(1f),
                     verticalAlignment = Alignment.CenterVertically
@@ -477,18 +479,8 @@ private fun ExeatCard(
                             overflow = TextOverflow.Ellipsis
                         )
                     }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = exeat.id,
-                        fontSize = 10.sp,
-                        fontFamily = FontFamily.Monospace,
-                        color = Color.Gray,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
                 }
 
-                // Status Pill
                 val (statusBg, statusFg) = when {
                     isOverdue -> Pair(Color(0xFFFEE2E2), CrimsonAlert)
                     exeat.status == "APPROVED" -> Pair(Color(0xFFDCFCE7), EmeraldGreen)
@@ -500,11 +492,15 @@ private fun ExeatCard(
 
                 Surface(
                     shape = RoundedCornerShape(12.dp),
-                    color = statusBg
+                    color = if (isQueued) Color(0xFFFEF3C7) else statusBg
                 ) {
                     Text(
-                        text = if (isOverdue) "⚠️ OVERDUE" else exeat.status,
-                        color = statusFg,
+                        text = when {
+                            isQueued -> "QUEUED"
+                            isOverdue -> "OVERDUE"
+                            else -> exeat.status
+                        },
+                        color = if (isQueued) Color(0xFFB45309) else statusFg,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
@@ -512,69 +508,55 @@ private fun ExeatCard(
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(4.dp))
 
             Text(
                 text = exeat.studentName,
-                fontSize = 15.sp,
+                fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
                 color = NavyPrimary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            val destinationLine = listOf(exeat.studentIndexNumber, exeat.destination)
+            val studentLine = listOf(exeat.studentIndexNumber, exeat.destination)
                 .filter(String::isNotBlank)
                 .joinToString(" • ")
-            if (destinationLine.isNotBlank()) {
+            if (studentLine.isNotBlank()) {
                 Text(
-                    text = destinationLine,
-                    fontSize = 12.sp,
+                    text = studentLine,
+                    fontSize = 11.sp,
                     color = Color(0xFF4B5563),
-                    maxLines = 2,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
             }
 
-            if (exeat.reason.isNotBlank()) {
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "Reason: ${exeat.reason}",
-                    fontSize = 12.sp,
-                    color = Color(0xFF6B7280),
-                    maxLines = 2
-                )
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Timestamps
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 val timeFormat = SimpleDateFormat("dd MMM, HH:mm", Locale.getDefault())
                 Text(
-                    text = "Out: ${timeFormat.format(Date(exeat.departureTime))}",
-                    fontSize = 11.sp,
-                    color = Color(0xFF64748B),
-                    modifier = Modifier.weight(1f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
                     text = "Return by: ${timeFormat.format(Date(exeat.expectedReturnTime))}",
-                    fontSize = 11.sp,
+                    fontSize = 10.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = if (isOverdue) CrimsonAlert else Color(0xFF64748B),
-                    modifier = Modifier.weight(1f),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+                if (exeat.status in setOf("APPROVED", "DEPARTED")) {
+                    TextButton(
+                        onClick = onFollowUp,
+                        modifier = Modifier.height(32.dp)
+                    ) {
+                        Text("Follow up", fontSize = 11.sp, color = NavyPrimary)
+                    }
+                }
             }
 
-            // Approval Buttons for Pending Exeats
             if (exeat.status == "PENDING" && canApprove) {
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(4.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End
@@ -806,17 +788,28 @@ private fun ExeatDetailDialog(
                         Text("Cancel pass", color = CrimsonAlert)
                     }
                 }
-                if (canApprove && exeat.status == "APPROVED") {
-                    TextButton(onClick = { onAction("reschedule") }) {
-                        Text("Reschedule pass", color = NavyPrimary)
+                if (canApprove && exeat.status in setOf("APPROVED", "DEPARTED")) {
+                    if (exeat.status == "APPROVED") {
+                        TextButton(onClick = { onAction("reschedule") }) {
+                            Text("Reschedule pass", color = NavyPrimary)
+                        }
                     }
                     if (workflow?.hasReconciliation != true) {
                         TextButton(onClick = { onAction("reconcile") }) {
-                            Text("Reconcile missing gate movement", color = NavyPrimary)
+                            Text(
+                                if (exeat.status == "DEPARTED") {
+                                    "Complete follow-up"
+                                } else {
+                                    "Reconcile missing gate movement"
+                                },
+                                color = NavyPrimary
+                            )
                         }
                     }
-                    TextButton(onClick = { onAction("cancel") }) {
-                        Text("Cancel pass", color = CrimsonAlert)
+                    if (exeat.status == "APPROVED") {
+                        TextButton(onClick = { onAction("cancel") }) {
+                            Text("Cancel pass", color = CrimsonAlert)
+                        }
                     }
                 }
                 if (canReview && workflow?.hasPendingReview == true) {

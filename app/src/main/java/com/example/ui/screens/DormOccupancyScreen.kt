@@ -276,54 +276,56 @@ private fun HouseDormSection(
                                         }
                                     }
 
-                                    @Composable
-                                    private fun RoomAllocationDialog(
-                                        student: Student,
-                                        bedSpaces: List<BedSpace>,
-                                        students: List<Student>,
-                                        onDismiss: () -> Unit,
-                                        onSelect: (BedSpace) -> Unit
-                                    ) {
-                                        AlertDialog(
-                                            onDismissRequest = onDismiss,
-                                            title = { Text("Assign room to ${student.fullName}") },
-                                            text = {
-                                                if (bedSpaces.isEmpty()) {
-                                                    Text("No rooms are available for this dormitory.")
-                                                } else {
-                                                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                                        bedSpaces.forEach { bedSpace ->
-                                                            val occupancy = students.count {
-                                                                it.assignedRoomId == bedSpace.id
-                                                            }
-                                                            val isCurrent = student.assignedRoomId == bedSpace.id
-                                                            val isAvailable = occupancy < bedSpace.capacity || isCurrent
-                                                            TextButton(
-                                                                onClick = { onSelect(bedSpace) },
-                                                                enabled = isAvailable,
-                                                                modifier = Modifier.fillMaxWidth()
-                                                            ) {
-                                                                Text(
-                                                                    text = "${bedSpace.name} · $occupancy/${bedSpace.capacity}" +
-                                                                        if (isCurrent) " · Current" else "",
-                                                                    modifier = Modifier.fillMaxWidth()
-                                                                )
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            },
-                                            confirmButton = {
-                                                TextButton(onClick = onDismiss) { Text("Cancel") }
-                                            }
-                                        )
-                                    }
                                 }
                             }
                         }
                     }
+
                 }
             }
         }
     }
+}
+
+@Composable
+private fun RoomAllocationDialog(
+    student: Student,
+    bedSpaces: List<BedSpace>,
+    students: List<Student>,
+    onDismiss: () -> Unit,
+    onSelect: (BedSpace) -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Assign room to ${student.fullName}") },
+        text = {
+            if (bedSpaces.isEmpty()) {
+                Text("No rooms are available for this dormitory.")
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    bedSpaces.forEach { bedSpace ->
+                        val occupancy = students.count {
+                            it.assignedRoomId == bedSpace.id
+                        }
+                        val isCurrent = student.assignedRoomId == bedSpace.id
+                        val isAvailable = occupancy < bedSpace.capacity || isCurrent
+                        TextButton(
+                            onClick = { onSelect(bedSpace) },
+                            enabled = isAvailable,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = "${bedSpace.name} · $occupancy/${bedSpace.capacity}" +
+                                    if (isCurrent) " · Current" else "",
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
 }

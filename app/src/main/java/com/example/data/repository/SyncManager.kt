@@ -40,12 +40,24 @@ class SyncManager(private val apiClient: DjangoApiClient) {
         )
     }
 
-    suspend fun performSync(sync: suspend () -> Unit) {
+    fun reportActionQueued(message: String, pendingCount: Int) {
         _syncState.value = _syncState.value.copy(
-            isSyncing = true,
             isOnline = false,
-            syncStatusMessage = "Connecting to ${_syncState.value.apiBaseUrl}..."
+            pendingOutboxCount = pendingCount,
+            syncStatusMessage = message
         )
+    }
+
+    fun reportActionWarning(message: String) {
+        _syncState.value = _syncState.value.copy(syncStatusMessage = message)
+    }
+
+    fun updatePendingOutboxCount(pendingCount: Int) {
+        _syncState.value = _syncState.value.copy(pendingOutboxCount = pendingCount)
+    }
+
+    suspend fun performSync(sync: suspend () -> Unit) {
+        _syncState.value = _syncState.value.copy(isSyncing = true)
         try {
             sync()
             _syncState.value = _syncState.value.copy(
@@ -58,14 +70,14 @@ class SyncManager(private val apiClient: DjangoApiClient) {
             _syncState.value = _syncState.value.copy(
                 isSyncing = false,
                 isOnline = false,
-                syncStatusMessage = "Sync failed: ${error.message ?: "School server unavailable."}"
+                syncStatusMessage = "Connection unavailable. Changes will retry when the server is reachable."
             )
             throw error
         } catch (error: IllegalStateException) {
             _syncState.value = _syncState.value.copy(
                 isSyncing = false,
                 isOnline = false,
-                syncStatusMessage = "Sync failed: ${error.message ?: "Invalid server data."}"
+                syncStatusMessage = "Could not refresh school data: ${error.message ?: "Invalid server data."}"
             )
             throw error
         }

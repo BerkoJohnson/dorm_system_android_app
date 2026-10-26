@@ -1,6 +1,7 @@
 package com.example.data.model
 
 import androidx.room.Entity
+import androidx.room.ColumnInfo
 import androidx.room.PrimaryKey
 
 @Entity(tableName = "students")
@@ -20,6 +21,8 @@ data class Student(
     val status: String = "IN_DORM", // "IN_DORM", "ON_EXEAT", "SICK_BAY", "ABSENT"
     val qrCodeKey: String, // Verification token embedded in QR
     val emergencyNotes: String = "None",
+    @ColumnInfo(defaultValue = "NULL")
     val assignedRoomId: String? = null,
+    @ColumnInfo(defaultValue = "''")
     val assignedRoomName: String = ""
 )

@@ -70,6 +70,8 @@ fun RollCallScreen(
     val rooms by viewModel.rooms.collectAsStateWithLifecycle()
     val allStudents by viewModel.students.collectAsStateWithLifecycle()
     val selectedHouseId by viewModel.selectedHouseId.collectAsStateWithLifecycle()
+    val pendingRollCallCount by viewModel.pendingRollCallCount.collectAsStateWithLifecycle()
+    val outboxMessage by viewModel.rollCallOutboxMessage.collectAsStateWithLifecycle()
 
     var selectedRoomId by remember { mutableStateOf<String?>(null) }
     var sessionType by remember { mutableStateOf("EVENING_ROLL_CALL") }
@@ -392,6 +394,24 @@ fun RollCallScreen(
         }
 
         Spacer(modifier = Modifier.height(10.dp))
+
+        if (pendingRollCallCount > 0 || outboxMessage != null) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFFFFBEB))
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text(
+                        text = outboxMessage
+                            ?: "$pendingRollCallCount roll-call action(s) waiting for the server. They will send automatically when connected.",
+                        fontSize = 12.sp,
+                        color = Color(0xFF92400E)
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+        }
 
         // Student Roster
         if (roomStudents.isEmpty()) {

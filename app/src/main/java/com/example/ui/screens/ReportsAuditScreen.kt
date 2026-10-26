@@ -1,5 +1,7 @@
 package com.example.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -30,9 +32,12 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,6 +53,8 @@ import com.example.ui.theme.EmeraldGreen
 import com.example.ui.theme.GoldAccent
 import com.example.ui.theme.NavyPrimary
 import com.example.ui.viewmodel.MainViewModel
+import kotlinx.coroutines.launch
+import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -55,17 +62,64 @@ import java.util.Locale
 @Composable
 fun ReportsAuditScreen(
     viewModel: MainViewModel,
+    canViewReports: Boolean,
+    canViewAudit: Boolean,
     modifier: Modifier = Modifier
 ) {
     val syncState by viewModel.syncState.collectAsStateWithLifecycle()
+    val report by viewModel.mobileReport.collectAsStateWithLifecycle()
+    val isLoadingReport by viewModel.isLoadingReport.collectAsStateWithLifecycle()
+    val hasMoreReportRows by viewModel.hasMoreReportRows.collectAsStateWithLifecycle()
+    val auditEvents by viewModel.auditEvents.collectAsStateWithLifecycle()
+    val isLoadingAudit by viewModel.isLoadingAudit.collectAsStateWithLifecycle()
+    val hasMoreAudit by viewModel.hasMoreAuditEvents.collectAsStateWithLifecycle()
+    val operationsMessage by viewModel.operationsMessage.collectAsStateWithLifecycle()
+    var selectedReportType by remember { mutableStateOf("housing") }
+    var exportFormat by remember { mutableStateOf("csv") }
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/csv")
+    ) { uri ->
+        if (uri != null) {
+            coroutineScope.launch {
+                try {
+                    val content = viewModel.downloadReport(exportFormat)
+                    context.contentResolver.openOutputStream(uri)?.use { output ->
+                        output.write(content)
+                    } ?: throw IOException("The selected file could not be opened.")
+                } catch (error: IOException) {
+                    viewModel.reportOperationsError("Could not export report: ${error.message}")
+                } catch (error: IllegalStateException) {
+                    viewModel.reportOperationsError("Could not export report: ${error.message}")
+                }
+            }
+        }
+    }
+    LaunchedEffect(canViewReports) {
+        if (canViewReports) viewModel.loadMobileReport(selectedReportType)
+    }
+    LaunchedEffect(canViewAudit) {
+        if (canViewAudit) viewModel.loadAuditEvents()
+    }
+
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        if (operationsMessage != null) {
+            item {
+                Text(
+                    text = operationsMessage.orEmpty(),
+                    color = Color(0xFFB91C1C),
+                    fontSize = 12.sp
+                )
+            }
+        }
         // Section: Configurable Django REST API Sync
-        item {
+        if (syncState.apiBaseUrl.isNotBlank()) item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
@@ -137,6 +191,14 @@ fun ReportsAuditScreen(
                         color = NavyPrimary,
                         fontWeight = FontWeight.Medium
                     )
+                    if (syncState.pendingOutboxCount > 0) {
+                        Text(
+                            text = "${syncState.pendingOutboxCount} change(s) waiting for delivery or attention",
+                            fontSize = 11.sp,
+                            color = Color(0xFFB45309),
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
 
                     Spacer(modifier = Modifier.height(12.dp))
 
@@ -150,18 +212,11 @@ fun ReportsAuditScreen(
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary),
                             shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = !syncState.isSyncing
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            if (syncState.isSyncing) {
-                                CircularProgressIndicator(color = GoldAccent, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Syncing...", color = Color.White, fontSize = 12.sp)
-                            } else {
-                                Icon(imageVector = Icons.Default.Refresh, contentDescription = null, tint = GoldAccent, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Sync Database Now", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                            }
+                            Icon(imageVector = Icons.Default.Refresh, contentDescription = null, tint = GoldAccent, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Refresh school data", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -169,7 +224,7 @@ fun ReportsAuditScreen(
         }
 
         // Section: Operational Reports & Export
-        item {
+        if (canViewReports) item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
@@ -201,29 +256,134 @@ fun ReportsAuditScreen(
                     Spacer(modifier = Modifier.height(10.dp))
 
                     Text(
-                        text = "Generate and export certified daily roll-call summaries, exeat logs, and dormitory bed occupancy audits for the Headmaster and District Education Directorate.",
+                        text = "View server-generated report data and save a CSV export. Results respect your assigned data scope.",
                         fontSize = 12.sp,
                         color = Color(0xFF475569)
                     )
 
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(
-                            text = "Report exports are not exposed by the mobile API yet. Use the Django web dashboard to generate official reports.",
-                            fontSize = 12.sp,
-                            color = Color(0xFF475569)
-                        )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf(
+                            "housing" to "Housing",
+                            "attendance" to "Roll call",
+                            "exeats" to "Exeats",
+                            "discipline" to "Discipline",
+                            "placement_exceptions" to "Placement exceptions",
+                            "attendance_league" to "Attendance league",
+                            "overdue_register" to "Overdue register",
+                            "gate_conflicts" to "Gate conflicts",
+                            "approval_turnaround" to "Approval turnaround",
+                            "exeat_analytics" to "Exeat analytics",
+                            "room_register" to "Room register",
+                            "staff_activity" to "Staff activity",
+                            "welfare_infirmary" to "Welfare & infirmary",
+                            "data_completeness" to "Data completeness",
+                            "movement_concerns" to "Movement concerns",
+                            "conduct_normalized" to "Conduct trends",
+                            "intervention_effectiveness" to "Intervention results"
+                        ).chunked(2).forEach { row ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                row.forEach { (type, label) ->
+                                    Button(
+                                        onClick = {
+                                            selectedReportType = type
+                                            viewModel.loadMobileReport(type)
+                                        },
+                                        modifier = Modifier.weight(1f),
+                                        enabled = !isLoadingReport
+                                    ) { Text(label, fontSize = 11.sp) }
+                                }
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    if (isLoadingReport) {
+                        CircularProgressIndicator(modifier = Modifier.size(22.dp))
+                    } else {
+                        report?.let { current ->
+                            Text(
+                                text = "${current.title} · ${current.recordCount} records",
+                                fontWeight = FontWeight.Bold,
+                                color = NavyPrimary,
+                                fontSize = 13.sp
+                            )
+                            current.metrics.forEach { (label, value) ->
+                                Text("$label: $value", fontSize = 12.sp, color = Color(0xFF475569))
+                            }
+                            if (current.headers.isNotEmpty()) {
+                                Text(
+                                    text = current.headers.joinToString("  •  "),
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 11.sp,
+                                    color = NavyPrimary
+                                )
+                                current.rows.take(5).forEach { row ->
+                                    Text(
+                                        text = row.joinToString("  •  "),
+                                        fontSize = 10.sp,
+                                        color = Color(0xFF475569),
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                            current.sections.forEach { section ->
+                                Text(
+                                    section.title,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 12.sp,
+                                    color = NavyPrimary
+                                )
+                                if (section.headers.isNotEmpty()) {
+                                    Text(
+                                        section.headers.joinToString("  •  "),
+                                        fontWeight = FontWeight.Medium,
+                                        fontSize = 10.sp
+                                    )
+                                }
+                                section.rows.take(5).forEach { row ->
+                                    Text(
+                                        row.joinToString("  •  "),
+                                        fontSize = 10.sp,
+                                        color = Color(0xFF475569),
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                            if (hasMoreReportRows) {
+                                Button(
+                                    onClick = {
+                                        viewModel.loadMobileReport(
+                                            selectedReportType,
+                                            loadMore = true
+                                        )
+                                    },
+                                    enabled = !isLoadingReport,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(if (isLoadingReport) "Loading…" else "Load more report rows")
+                                }
+                            }
+                            Button(
+                                onClick = {
+                                    exportFormat = "csv"
+                                    exportLauncher.launch(
+                                        "${current.title.lowercase().replace(' ', '-')}.csv"
+                                    )
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("Save CSV export") }
+                        }
                     }
                 }
             }
         }
 
-        // Audit data stays on the Django server; no mobile audit-feed endpoint exists.
-        item {
+        if (canViewAudit) item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
@@ -248,11 +408,34 @@ fun ReportsAuditScreen(
                         )
                     }
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "Audit entries are maintained by Django but are not available through the mobile API. Review the official audit trail in the Django web dashboard.",
-                        fontSize = 12.sp,
-                        color = Color(0xFF475569)
-                    )
+                    Text("Recent server audit events", fontSize = 12.sp, color = Color(0xFF475569))
+                    Spacer(modifier = Modifier.height(8.dp))
+                    if (isLoadingAudit && auditEvents.isEmpty()) {
+                        CircularProgressIndicator(modifier = Modifier.size(22.dp))
+                    }
+                    auditEvents.forEach { event ->
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 6.dp)
+                        ) {
+                            Text(event.summary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                "${event.action} · ${event.actor} · ${event.targetType} · ${event.createdAt}",
+                                fontSize = 10.sp,
+                                color = Color(0xFF64748B)
+                            )
+                        }
+                    }
+                    if (hasMoreAudit || isLoadingAudit) {
+                        Button(
+                            onClick = { viewModel.loadAuditEvents(loadMore = true) },
+                            enabled = hasMoreAudit && !isLoadingAudit,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(if (isLoadingAudit) "Loading…" else "Load more audit events")
+                        }
+                    }
                 }
             }
         }

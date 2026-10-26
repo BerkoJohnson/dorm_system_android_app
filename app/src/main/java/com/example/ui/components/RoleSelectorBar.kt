@@ -29,9 +29,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Image
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -41,7 +38,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -55,6 +51,8 @@ import com.example.ui.theme.NavyPrimary
 fun RoleSelectorBar(
     currentRole: UserRole,
     syncStatus: String,
+    isOnline: Boolean,
+    pendingOutboxCount: Int,
     onSyncClick: () -> Unit,
     onLogoutClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -66,14 +64,12 @@ fun RoleSelectorBar(
         color = NavyPrimary,
         shadowElevation = 0.dp
     ) {
-        val isError = syncStatus.contains("fail", ignoreCase = true) ||
-            syncStatus.contains("unreachable", ignoreCase = true)
-        val isConnecting = syncStatus.contains("connect", ignoreCase = true)
-        val syncRotation by animateFloatAsState(
-            targetValue = if (isConnecting) 360f else 0f,
-            animationSpec = spring(stiffness = 180f),
-            label = "sync-icon-rotation"
-        )
+        val isError = !isOnline && !syncStatus.contains("queued", ignoreCase = true)
+        val statusColor = when {
+            isError -> Color(0xFFEF4444)
+            !isOnline -> GoldAccent
+            else -> EmeraldGreen
+        }
 
         Row(
             modifier = Modifier
@@ -160,37 +156,34 @@ fun RoleSelectorBar(
                 }
             }
 
-            if (currentRole == UserRole.ADMINISTRATOR) Row(
+            if (
+                currentRole == UserRole.ADMINISTRATOR ||
+                pendingOutboxCount > 0 ||
+                !isOnline
+            ) Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .clip(RoundedCornerShape(999.dp))
                     .background(Color(0xFF123B76).copy(alpha = 0.7f))
-                    .clickable { onSyncClick() }
+                    .clickable(enabled = currentRole == UserRole.ADMINISTRATOR) {
+                        onSyncClick()
+                    }
                     .defaultMinSize(minHeight = 48.dp)
                     .padding(horizontal = 10.dp, vertical = 6.dp)
             ) {
-                val syncColor by animateColorAsState(
-                    targetValue = when {
-                        isError -> Color(0xFFEF4444)
-                        isConnecting -> GoldAccent
-                        else -> EmeraldGreen
-                    },
-                    animationSpec = spring(stiffness = 500f),
-                    label = "sync-status-color"
-                )
                 Box(
                     modifier = Modifier
                         .size(8.dp)
                         .clip(CircleShape)
-                        .background(syncColor)
+                        .background(statusColor)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
                     text = when {
+                        pendingOutboxCount > 0 -> "Queued: $pendingOutboxCount"
                         isError -> "Offline"
-                        isConnecting -> "Syncing"
-                        syncStatus.contains("ready", ignoreCase = true) -> "Ready"
-                        else -> "Synced"
+                        !isOnline -> "Offline"
+                        else -> "Online"
                     },
                     color = Color(0xFFE2E8F0),
                     fontSize = 11.sp,
@@ -202,9 +195,7 @@ fun RoleSelectorBar(
                     imageVector = Icons.Default.Sync,
                     contentDescription = "Sync status: $syncStatus",
                     tint = GoldAccent,
-                    modifier = Modifier
-                        .size(16.dp)
-                        .graphicsLayer { rotationZ = syncRotation }
+                    modifier = Modifier.size(16.dp)
                 )
             }
         }

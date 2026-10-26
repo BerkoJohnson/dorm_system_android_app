@@ -50,9 +50,18 @@ class BoardingRepository(private val db: AppDatabase) {
 
     suspend fun clearSessionData() {
         db.withTransaction {
-            db.clearAllTables()
+            db.houseDao().clear()
+            db.roomDao().clear()
+            db.studentDao().clear()
+            db.exeatDao().clear()
+            db.attendanceDao().clear()
+            db.gateMovementDao().clear()
+            db.auditDao().clear()
         }
     }
+
+    val rollCallOutboxDao get() = db.rollCallOutboxDao()
+    val remoteMutationOutboxDao get() = db.remoteMutationOutboxDao()
 
     fun getRoomsByHouse(houseId: String): Flow<List<RoomEntity>> =
         db.roomDao().getRoomsByHouse(houseId)

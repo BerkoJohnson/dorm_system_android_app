@@ -8,7 +8,13 @@ import com.example.data.model.BedSpace
 import com.example.data.model.ExeatRequest
 import com.example.data.model.GateMovement
 import com.example.data.model.House
+import com.example.data.model.MobileAuditEvent
+import com.example.data.model.MobileReport
+import com.example.data.model.MobileReportSection
+import com.example.data.model.RemoteMutationOutboxItem
 import com.example.data.model.RoomEntity
+import com.example.data.model.RollCallOutboxItem
+import com.example.data.model.SmsCampaign
 import com.example.data.model.Student
 import com.example.data.model.UserRole
 import com.example.data.model.userRoleFromServerRole
@@ -17,6 +23,7 @@ import com.example.data.repository.GateVerificationResult
 import com.example.data.repository.SyncManager
 import com.example.data.repository.SyncState
 import com.example.data.remote.DjangoApiClient
+import com.example.data.remote.DjangoApiException
 import com.example.data.remote.DjangoDataSync
 import java.io.IOException
 import java.time.Instant
@@ -48,7 +55,8 @@ enum class AppScreen {
     DORMS,
     ROLL_CALL_HISTORY,
     NOTIFICATIONS,
-    REPORTS_SYNC
+    REPORTS_SYNC,
+    SMS_CAMPAIGNS
 }
 
 data class DashboardMetrics(
@@ -126,6 +134,13 @@ class MainViewModel(
     private val apiClient: DjangoApiClient
 ) : ViewModel() {
     private val sessionDataMutex = Mutex()
+    private val rollCallOutboxMutex = Mutex()
+    private val remoteMutationOutboxMutex = Mutex()
+    private var currentUserId: String? = null
+    private val _pendingRollCallCount = MutableStateFlow(0)
+    val pendingRollCallCount: StateFlow<Int> = _pendingRollCallCount.asStateFlow()
+    private val _rollCallOutboxMessage = MutableStateFlow<String?>(null)
+    val rollCallOutboxMessage: StateFlow<String?> = _rollCallOutboxMessage.asStateFlow()
 
     private val _currentRole = MutableStateFlow(UserRole.HOUSEMASTER)
     val currentRole: StateFlow<UserRole> = _currentRole.asStateFlow()
@@ -140,6 +155,29 @@ class MainViewModel(
     val apiPermissions: StateFlow<ApiPermissions> = _apiPermissions.asStateFlow()
     private val _bedSpaces = MutableStateFlow<List<BedSpace>>(emptyList())
     val bedSpaces: StateFlow<List<BedSpace>> = _bedSpaces.asStateFlow()
+    private val _mobileReport = MutableStateFlow<MobileReport?>(null)
+    val mobileReport: StateFlow<MobileReport?> = _mobileReport.asStateFlow()
+    private var selectedReportType = "housing"
+    private val _isLoadingReport = MutableStateFlow(false)
+    val isLoadingReport: StateFlow<Boolean> = _isLoadingReport.asStateFlow()
+    private val _hasMoreReportRows = MutableStateFlow(false)
+    val hasMoreReportRows: StateFlow<Boolean> = _hasMoreReportRows.asStateFlow()
+    private var reportPage = 1
+    private val _auditEvents = MutableStateFlow<List<MobileAuditEvent>>(emptyList())
+    val auditEvents: StateFlow<List<MobileAuditEvent>> = _auditEvents.asStateFlow()
+    private val _isLoadingAudit = MutableStateFlow(false)
+    val isLoadingAudit: StateFlow<Boolean> = _isLoadingAudit.asStateFlow()
+    private val _hasMoreAuditEvents = MutableStateFlow(false)
+    val hasMoreAuditEvents: StateFlow<Boolean> = _hasMoreAuditEvents.asStateFlow()
+    private var auditPage = 1
+    private val _smsCampaigns = MutableStateFlow<List<SmsCampaign>>(emptyList())
+    val smsCampaigns: StateFlow<List<SmsCampaign>> = _smsCampaigns.asStateFlow()
+    private val _smsEnabled = MutableStateFlow(false)
+    val smsEnabled: StateFlow<Boolean> = _smsEnabled.asStateFlow()
+    private val _isLoadingSmsCampaigns = MutableStateFlow(false)
+    val isLoadingSmsCampaigns: StateFlow<Boolean> = _isLoadingSmsCampaigns.asStateFlow()
+    private val _operationsMessage = MutableStateFlow<String?>(null)
+    val operationsMessage: StateFlow<String?> = _operationsMessage.asStateFlow()
 
     val houses: StateFlow<List<House>> = repository.allHouses
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -232,6 +270,14 @@ class MainViewModel(
         _apiPermissions.value = apiPermissionsFrom(capabilities, features)
     }
 
+    fun setAuthenticatedUserId(userId: String?) {
+        currentUserId = userId?.takeIf(String::isNotBlank)
+        viewModelScope.launch {
+            refreshRollCallOutboxCount()
+            processRollCallOutbox()
+        }
+    }
+
     private fun apiPermissionsFrom(
         capabilities: JSONObject?,
         features: JSONObject?
@@ -274,6 +320,10 @@ class MainViewModel(
             }
             _apiPermissions.value = ApiPermissions()
             _bedSpaces.value = emptyList()
+            clearOperationsState()
+            currentUserId = null
+            _pendingRollCallCount.value = 0
+            _rollCallOutboxMessage.value = null
             _currentRole.value = UserRole.HOUSEMASTER
             _selectedHouseId.value = null
             _serverDashboardMetrics.value = null
@@ -302,6 +352,9 @@ class MainViewModel(
         }
         _serverDashboardMetrics.value = null
         _bedSpaces.value = emptyList()
+        clearOperationsState()
+        _pendingRollCallCount.value = 0
+        _rollCallOutboxMessage.value = null
         _notifications.value = emptyList()
         _isLoadingNotifications.value = false
         _hasMoreNotifications.value = false
@@ -329,7 +382,7 @@ class MainViewModel(
     fun loadBedSpaces() {
         viewModelScope.launch {
             try {
-                val response = apiClient.get("students/options/")
+                val response = apiClient.get("students/allocation-options/")
                 val rooms = response.optJSONArray("rooms") ?: JSONArray()
                 _bedSpaces.value = (0 until rooms.length()).mapNotNull { index ->
                     val room = rooms.optJSONObject(index) ?: return@mapNotNull null
@@ -354,15 +407,271 @@ class MainViewModel(
 
     fun reassignStudentRoom(student: Student, bedSpace: BedSpace) {
         viewModelScope.launch {
-            remoteAction("Student room allocation updated") {
-                apiClient.post(
-                    "students/${student.id}/allocation/",
-                    JSONObject()
-                        .put("dormitory_id", bedSpace.dormitoryId)
-                        .put("room_id", bedSpace.id)
+            remoteAction(
+                label = "Student room allocation updated",
+                path = "students/${student.id}/allocation/",
+                payload = JSONObject()
+                    .put("dormitory_id", bedSpace.dormitoryId)
+                    .put("room_id", bedSpace.id)
+            )
+        }
+    }
+
+    fun loadMobileReport(reportType: String, loadMore: Boolean = false) {
+        if (_isLoadingReport.value) return
+        if (loadMore && !_hasMoreReportRows.value) return
+        if (!loadMore) {
+            selectedReportType = reportType
+            reportPage = 1
+            _mobileReport.value = null
+        }
+        val requestedPage = if (loadMore) reportPage + 1 else 1
+        viewModelScope.launch {
+            _isLoadingReport.value = true
+            _operationsMessage.value = null
+            try {
+                val response = apiClient.get(
+                    "reports/",
+                    mapOf(
+                        "report" to reportType,
+                        "page" to requestedPage.toString(),
+                        "page_size" to "100"
+                    )
                 )
+                val metrics = response.optJSONArray("kpi_tiles") ?: JSONArray()
+                val headers = response.optJSONArray("headers") ?: JSONArray()
+                val rows = response.optJSONArray("rows") ?: JSONArray()
+                val sections = response.optJSONArray("sections") ?: JSONArray()
+                val pageReport = MobileReport(
+                    title = response.optString("title", reportType),
+                    recordCount = response.optInt("record_count"),
+                    generatedAt = response.optString("generated_at"),
+                    metrics = (0 until metrics.length()).mapNotNull { index ->
+                        val item = metrics.optJSONArray(index) ?: return@mapNotNull null
+                        if (item.length() < 2) null else {
+                            item.optString(0) to item.optString(1)
+                        }
+                    },
+                    headers = (0 until headers.length()).map { headers.optString(it) },
+                    rows = (0 until rows.length()).mapNotNull { index ->
+                        val row = rows.optJSONArray(index) ?: return@mapNotNull null
+                        (0 until row.length()).map { row.optString(it) }
+                    },
+                    sections = (0 until sections.length()).mapNotNull { index ->
+                        val section = sections.optJSONObject(index)
+                            ?: return@mapNotNull null
+                        val sectionHeaders = section.optJSONArray("headers") ?: JSONArray()
+                        val sectionRows = section.optJSONArray("rows") ?: JSONArray()
+                        MobileReportSection(
+                            title = section.optString("title"),
+                            headers = (0 until sectionHeaders.length()).map {
+                                sectionHeaders.optString(it)
+                            },
+                            rows = (0 until sectionRows.length()).mapNotNull { rowIndex ->
+                                val row = sectionRows.optJSONArray(rowIndex)
+                                    ?: return@mapNotNull null
+                                (0 until row.length()).map { row.optString(it) }
+                            }
+                        )
+                    }
+                )
+                val previous = _mobileReport.value
+                _mobileReport.value = if (loadMore && previous != null) {
+                    pageReport.copy(
+                        metrics = previous.metrics,
+                        rows = previous.rows + pageReport.rows,
+                        sections = pageReport.sections.mapIndexed { index, section ->
+                            val previousSection = previous.sections.getOrNull(index)
+                            if (previousSection == null) section else {
+                                section.copy(rows = previousSection.rows + section.rows)
+                            }
+                        }
+                    )
+                } else {
+                    pageReport
+                }
+                reportPage = requestedPage
+                _hasMoreReportRows.value =
+                    response.optJSONObject("pagination")?.optBoolean("has_next")
+                        ?: (pageReport.rows.size + pageReport.sections.sumOf {
+                            it.rows.size
+                        } == 100)
+            } catch (error: IOException) {
+                _operationsMessage.value = "Could not load report: ${error.message}"
+            } catch (error: IllegalStateException) {
+                _operationsMessage.value = "Could not load report: ${error.message}"
+            } finally {
+                _isLoadingReport.value = false
             }
         }
+    }
+
+    suspend fun downloadReport(format: String): ByteArray =
+        apiClient.download(
+            "reports/export/",
+            mapOf("report" to selectedReportType, "format" to format)
+        )
+
+    fun loadAuditEvents(loadMore: Boolean = false) {
+        if (_isLoadingAudit.value || (loadMore && !_hasMoreAuditEvents.value)) return
+        val requestedPage = if (loadMore) auditPage + 1 else 1
+        viewModelScope.launch {
+            _isLoadingAudit.value = true
+            _operationsMessage.value = null
+            try {
+                val response = apiClient.get(
+                    "audit/events/",
+                    mapOf("page" to requestedPage.toString(), "page_size" to "30")
+                )
+                val items = response.optJSONArray("items") ?: JSONArray()
+                val parsed = (0 until items.length()).mapNotNull { index ->
+                    val item = items.optJSONObject(index) ?: return@mapNotNull null
+                    MobileAuditEvent(
+                        id = item.optString("id"),
+                        action = item.optString("action_display"),
+                        actor = item.optString("actor"),
+                        targetType = item.optString("target_type"),
+                        summary = item.optString("summary"),
+                        createdAt = item.optString("created_at")
+                    )
+                }
+                _auditEvents.value = if (loadMore) {
+                    (_auditEvents.value + parsed).distinctBy { it.id }
+                } else {
+                    parsed
+                }
+                auditPage = requestedPage
+                _hasMoreAuditEvents.value =
+                    response.optJSONObject("pagination")?.optBoolean("has_next")
+                        ?: (parsed.size == 30)
+            } catch (error: DjangoApiException) {
+                _operationsMessage.value = if (
+                    error.statusCode == 404 ||
+                    error.message?.contains(
+                        "No such api endpoint exists in this version",
+                        ignoreCase = true
+                    ) == true
+                ) {
+                    "This school server version does not provide the audit/events/ API. The server must expose an audit-history route for this screen."
+                } else {
+                    "Could not load audit history: ${error.message}"
+                }
+            } catch (error: IOException) {
+                _operationsMessage.value = "Could not load audit history: ${error.message}"
+            } catch (error: IllegalStateException) {
+                _operationsMessage.value = "Could not load audit history: ${error.message}"
+            } finally {
+                _isLoadingAudit.value = false
+            }
+        }
+    }
+
+    fun loadSmsCampaigns() {
+        if (_isLoadingSmsCampaigns.value) return
+        viewModelScope.launch {
+            _isLoadingSmsCampaigns.value = true
+            _operationsMessage.value = null
+            try {
+                val response = apiClient.get(
+                    "sms/campaigns/",
+                    mapOf("page" to "1", "page_size" to "50")
+                )
+                val items = response.optJSONArray("items") ?: JSONArray()
+                _smsEnabled.value = response.optBoolean("sms_enabled")
+                _smsCampaigns.value = (0 until items.length()).mapNotNull { index ->
+                    items.optJSONObject(index)?.let(::smsCampaignFrom)
+                }
+            } catch (error: IOException) {
+                _operationsMessage.value = "Could not load SMS campaigns: ${error.message}"
+            } catch (error: IllegalStateException) {
+                _operationsMessage.value = "Could not load SMS campaigns: ${error.message}"
+            } finally {
+                _isLoadingSmsCampaigns.value = false
+            }
+        }
+    }
+
+    fun createSmsCampaign(scope: String, houseId: String?, message: String) {
+        viewModelScope.launch {
+            val payload = JSONObject()
+                .put("scope", scope)
+                .put("message", message.trim())
+            if (scope == "house" && houseId != null) payload.put("house_id", houseId)
+            remoteOperation("SMS campaign submitted", "sms/campaigns/", payload) {
+                loadSmsCampaigns()
+            }
+        }
+    }
+
+    fun decideSmsCampaign(campaignId: String, approve: Boolean, note: String) {
+        viewModelScope.launch {
+            remoteOperation(
+                "SMS campaign decision recorded",
+                "sms/campaigns/$campaignId/decision/",
+                JSONObject()
+                    .put("approve", approve)
+                    .put("decision_note", note.trim())
+            ) {
+                loadSmsCampaigns()
+            }
+        }
+    }
+
+    fun reportOperationsError(message: String) {
+        _operationsMessage.value = message
+    }
+
+    private suspend fun remoteOperation(
+        label: String,
+        path: String,
+        payload: JSONObject,
+        onSuccess: () -> Unit
+    ) {
+        _operationsMessage.value = null
+        try {
+        val delivered = submitRemoteMutation(
+            label,
+            path,
+            payload,
+            onSuccess = { onSuccess() }
+        )
+            if (!delivered) {
+                _operationsMessage.value = "$label saved and queued until the server is reachable."
+            }
+        } catch (error: IOException) {
+            _operationsMessage.value = "$label failed: ${error.message}"
+        } catch (error: IllegalStateException) {
+            _operationsMessage.value = "$label failed: ${error.message}"
+        }
+    }
+
+    private fun smsCampaignFrom(item: JSONObject): SmsCampaign {
+        return SmsCampaign(
+            id = item.optString("id"),
+            scope = item.optString("scope"),
+            houseName = item.optJSONObject("house")?.optString("name"),
+            message = item.optString("message"),
+            status = item.optString("status_display"),
+            recipientCount = item.optInt("recipient_count"),
+            decisionNote = item.optString("decision_note"),
+            createdBy = item.optString("created_by")
+        )
+    }
+
+    private fun clearOperationsState() {
+        _mobileReport.value = null
+        selectedReportType = "housing"
+        _isLoadingReport.value = false
+        _hasMoreReportRows.value = false
+        reportPage = 1
+        _auditEvents.value = emptyList()
+        _isLoadingAudit.value = false
+        _hasMoreAuditEvents.value = false
+        auditPage = 1
+        _smsCampaigns.value = emptyList()
+        _smsEnabled.value = false
+        _isLoadingSmsCampaigns.value = false
+        _operationsMessage.value = null
     }
 
     fun loadNotifications() {
@@ -453,8 +762,10 @@ class MainViewModel(
 
     fun markNotificationRead(notificationId: String) {
         viewModelScope.launch {
-            remoteAction("Notification marked as read") {
-                val response = apiClient.post("notifications/$notificationId/read/")
+            remoteAction(
+                label = "Notification marked as read",
+                path = "notifications/$notificationId/read/",
+                onSuccess = { response ->
                 _notifications.value = _notifications.value.map { notification ->
                     if (notification.id == notificationId) notification.copy(isRead = true)
                     else notification
@@ -466,17 +777,31 @@ class MainViewModel(
                 } else {
                     loadNotifications()
                 }
-            }
+                },
+                onQueued = {
+                    _notifications.value = _notifications.value.map { notification ->
+                        if (notification.id == notificationId) notification.copy(isRead = true)
+                        else notification
+                    }
+                }
+            )
         }
     }
 
     fun markAllNotificationsRead() {
         viewModelScope.launch {
-            remoteAction("All notifications marked as read") {
-                apiClient.post("notifications/read-all/")
+            remoteAction(
+                label = "All notifications marked as read",
+                path = "notifications/read-all/",
+                onSuccess = {
                 _notifications.value = _notifications.value.map { it.copy(isRead = true) }
                 _unreadNotificationCount.value = 0
-            }
+                },
+                onQueued = {
+                    _notifications.value = _notifications.value.map { it.copy(isRead = true) }
+                    _unreadNotificationCount.value = 0
+                }
+            )
         }
     }
 
@@ -598,13 +923,28 @@ class MainViewModel(
                     "Activity" to "Activity",
                     "Unmarked" to "Unmarked"
                 )[status] ?: throw IllegalArgumentException("Choose a valid attendance status.")
-                apiClient.post(
-                    "roll-call/sessions/${session.id}/entries/${entry.id}/",
-                    JSONObject().put("status", serverStatus).put("remarks", remarks)
+                val delivered = submitRemoteMutation(
+                    label = "Roll-call attendance updated",
+                    path = "roll-call/sessions/${session.id}/entries/${entry.id}/",
+                    payload = JSONObject().put("status", serverStatus).put("remarks", remarks),
+                    onSuccess = {
+                        openRollCallSession(session)
+                        loadRollCallHistory()
+                    },
+                    onQueued = {
+                        _rollCallEntries.value = _rollCallEntries.value.map { current ->
+                            if (current.id == entry.id) {
+                                current.copy(status = serverStatus, remarks = remarks)
+                            } else {
+                                current
+                            }
+                        }
+                    }
                 )
-                openRollCallSession(session)
-                loadRollCallHistory()
-                syncManager.reportActionSuccess("Roll-call entry updated on the school server.")
+                if (!delivered) {
+                    _rollCallHistoryMessage.value =
+                        "Attendance change saved on this device and queued for delivery."
+                }
             } catch (error: IOException) {
                 _rollCallHistoryMessage.value = "Could not update attendance: ${error.message}"
                 syncManager.reportActionError(_rollCallHistoryMessage.value.orEmpty())
@@ -632,60 +972,44 @@ class MainViewModel(
     ) {
         viewModelScope.launch {
             try {
+                val ownerId = currentUserId
+                    ?: throw IllegalStateException("Sign in again before submitting roll call.")
                 val houseId = _selectedHouseId.value
                     ?: throw IllegalArgumentException("Choose a house before submitting roll call.")
                 if (roomId.isBlank()) {
                     throw IllegalArgumentException("Choose a dormitory before submitting roll call.")
                 }
-                val serverType = when (sessionType) {
-                    "EVENING_ROLL_CALL" -> "Evening"
-                    "MORNING_INSPECTION" -> "Morning"
-                    else -> "Special"
+                if (markedStatuses.isEmpty() || markedStatuses.values.any {
+                        it !in setOf("PRESENT", "ABSENT", "ON_EXEAT", "SICK_BAY")
+                    }
+                ) {
+                    throw IllegalArgumentException("Mark every student before submitting roll call.")
                 }
-                val start = apiClient.post(
-                    "roll-call/sessions/",
-                    JSONObject()
-                        .put("house_id", houseId)
-                        .put("dormitory_id", roomId)
-                        .put("session_type", serverType)
-                        .put("inspection_date", SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date()))
+                val queuedAction = RollCallOutboxItem(
+                    id = UUID.randomUUID().toString(),
+                    ownerId = ownerId,
+                    tenantUrl = apiClient.baseUrl,
+                    houseId = houseId,
+                    dormitoryId = roomId,
+                    sessionType = sessionType,
+                    inspectionDate = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date()),
+                    statusesJson = JSONObject(markedStatuses).toString(),
+                    remoteSessionId = null,
+                    attempts = 0,
+                    lastError = null,
+                    createdAt = System.currentTimeMillis()
                 )
-                val sessionId = start.optString("id")
-                if (sessionId.isBlank()) throw IllegalStateException("The server did not create a roll-call session.")
-                val entries = start.optJSONArray("entries") ?: JSONArray()
-                val entriesToSubmit = (0 until entries.length()).mapNotNull(entries::optJSONObject)
-                val missingStudentIds = entriesToSubmit.mapNotNull { entry ->
-                    val studentId = entry.optJSONObject("student")?.optString("id").orEmpty()
-                    val status = markedStatuses[studentId]
-                    if (status.isNullOrBlank() || status == "UNMARKED") studentId else null
+                repository.rollCallOutboxDao.insert(queuedAction)
+                refreshRollCallOutboxCount()
+                _rollCallOutboxMessage.value = "Roll call saved securely and queued for delivery."
+                processRollCallOutbox()
+                if (_pendingRollCallCount.value == 0) {
+                    onResult("Roll call submitted to the school server.")
+                } else {
+                    onResult("Roll call is saved and queued. It will retry when the server is reachable.")
                 }
-                if (missingStudentIds.isNotEmpty()) {
-                    throw IllegalStateException(
-                        "The server roster contains ${missingStudentIds.size} student(s) not marked in the app. Refresh the roster and try again."
-                    )
-                }
-                val apiStatuses = mapOf(
-                    "PRESENT" to "Present",
-                    "ABSENT" to "Absent",
-                    "ON_EXEAT" to "On Exeat",
-                    "SICK_BAY" to "Infirmary"
-                )
-                for (entry in entriesToSubmit) {
-                    val studentId = entry.optJSONObject("student")?.optString("id").orEmpty()
-                    val requestedStatus = markedStatuses.getValue(studentId)
-                    val status = apiStatuses[requestedStatus]
-                        ?: throw IllegalArgumentException("Unsupported attendance status: $requestedStatus")
-                    apiClient.post(
-                        "roll-call/sessions/$sessionId/entries/${entry.optString("id")}/",
-                        JSONObject().put("status", status)
-                    )
-                }
-                apiClient.post("roll-call/sessions/$sessionId/complete/")
-                syncManager.reportActionSuccess("Roll call submitted successfully.")
-                onResult("Roll call submitted to the school server.")
-                triggerSync()
             } catch (error: IOException) {
-                val message = "Roll call was not submitted: ${error.message}"
+                val message = "Roll call was not queued: ${error.message}"
                 syncManager.reportActionError(message)
                 onResult(message)
             } catch (error: IllegalStateException) {
@@ -700,26 +1024,167 @@ class MainViewModel(
         }
     }
 
+    private suspend fun refreshRollCallOutboxCount() {
+        val ownerId = currentUserId
+        if (ownerId.isNullOrBlank()) {
+            _pendingRollCallCount.value = 0
+            return
+        }
+        _pendingRollCallCount.value = repository.rollCallOutboxDao.countFor(
+            ownerId,
+            apiClient.baseUrl
+        )
+    }
+
+    private suspend fun processRollCallOutbox() {
+        if (currentUserId.isNullOrBlank() || !_apiPermissions.value.rollCall) return
+        rollCallOutboxMutex.withLock {
+            try {
+                val dao = repository.rollCallOutboxDao
+                val actions = dao.getAll().filter {
+                    it.ownerId == currentUserId && it.tenantUrl == apiClient.baseUrl
+                }
+                for (action in actions) {
+                    try {
+                        processRollCallAction(action)
+                    } catch (error: IOException) {
+                        recordRollCallOutboxFailure(
+                            action,
+                            error.message ?: "School server unavailable."
+                        )
+                        _rollCallOutboxMessage.value =
+                            "Roll-call delivery is pending: ${error.message ?: "server unavailable."}"
+                        break
+                    } catch (error: IllegalStateException) {
+                        recordRollCallOutboxFailure(
+                            action,
+                            error.message ?: "Invalid server response."
+                        )
+                        _rollCallOutboxMessage.value =
+                            "Roll-call delivery is pending: ${error.message ?: "invalid server response."}"
+                        break
+                    } catch (error: IllegalArgumentException) {
+                        recordRollCallOutboxFailure(
+                            action,
+                            error.message ?: "Invalid roll-call data."
+                        )
+                        _rollCallOutboxMessage.value =
+                            "Roll-call delivery needs attention: ${error.message ?: "invalid data."}"
+                        break
+                    }
+                }
+            } finally {
+                refreshRollCallOutboxCount()
+            }
+        }
+    }
+
+    private suspend fun recordRollCallOutboxFailure(
+        action: RollCallOutboxItem,
+        message: String
+    ) {
+        val latest = repository.rollCallOutboxDao.getAll().firstOrNull { it.id == action.id }
+            ?: return
+        repository.rollCallOutboxDao.update(
+            latest.copy(attempts = latest.attempts + 1, lastError = message)
+        )
+    }
+
+    private suspend fun processRollCallAction(action: RollCallOutboxItem) {
+        val dao = repository.rollCallOutboxDao
+        val serverType = when (action.sessionType) {
+            "EVENING_ROLL_CALL" -> "Evening"
+            "MORNING_INSPECTION" -> "Morning"
+            else -> "Special"
+        }
+        var sessionId = action.remoteSessionId
+        val entries: JSONArray
+        if (sessionId == null) {
+            val response = apiClient.post(
+                "roll-call/sessions/",
+                JSONObject()
+                    .put("house_id", action.houseId)
+                    .put("dormitory_id", action.dormitoryId)
+                    .put("session_type", serverType)
+                    .put("inspection_date", action.inspectionDate),
+                idempotencyKey = "${action.id}-start"
+            )
+            sessionId = response.optString("id").takeIf(String::isNotBlank)
+                ?: throw IllegalStateException("The server did not create a roll-call session.")
+            entries = response.optJSONArray("entries") ?: JSONArray()
+            dao.update(action.copy(remoteSessionId = sessionId, lastError = null))
+        } else {
+            val detail = apiClient.get("roll-call/sessions/$sessionId/")
+            entries = detail.optJSONArray("entries") ?: JSONArray()
+        }
+
+        val statuses = JSONObject(action.statusesJson)
+        val apiStatuses = mapOf(
+            "PRESENT" to "Present",
+            "ABSENT" to "Absent",
+            "ON_EXEAT" to "On Exeat",
+            "SICK_BAY" to "Infirmary"
+        )
+        val entriesToSubmit = (0 until entries.length()).mapNotNull(entries::optJSONObject)
+        if (entriesToSubmit.isEmpty()) {
+            throw IllegalStateException("The server returned no students for this roll-call session.")
+        }
+        val missingCount = entriesToSubmit.count { entry ->
+            val studentId = entry.optJSONObject("student")?.optString("id").orEmpty()
+            statuses.optString(studentId).isBlank()
+        }
+        if (missingCount > 0) {
+            throw IllegalStateException(
+                "The server roster includes $missingCount student(s) without a saved roll-call mark."
+            )
+        }
+        for (entry in entriesToSubmit) {
+            val studentId = entry.optJSONObject("student")?.optString("id").orEmpty()
+            val requestedStatus = statuses.optString(studentId)
+            val apiStatus = apiStatuses[requestedStatus]
+                ?: throw IllegalArgumentException("Unsupported attendance status: $requestedStatus")
+            apiClient.post(
+                "roll-call/sessions/$sessionId/entries/${entry.optString("id")}/",
+                JSONObject().put("status", apiStatus),
+                idempotencyKey = UUID.nameUUIDFromBytes(
+                    "${action.id}:${entry.optString("id")}".toByteArray()
+                ).toString()
+            )
+        }
+        apiClient.post(
+            "roll-call/sessions/$sessionId/complete/",
+            idempotencyKey = "${action.id}-complete"
+        )
+        dao.delete(action.id)
+        _rollCallOutboxMessage.value = "Queued roll call delivered successfully."
+        syncManager.reportActionSuccess("Roll call submitted successfully.")
+        triggerSync()
+    }
+
     // Exeat Actions
     fun approveExeat(exeatId: String, approverName: String, notes: String?) {
         viewModelScope.launch {
-            remoteAction("Exeat approved") {
-                apiClient.post(
-                    "exeats/$exeatId/approve/",
-                    JSONObject().put("approval_remarks", notes.orEmpty())
-                )
-            }
+            remoteAction(
+                label = "Exeat approved",
+                path = "exeats/$exeatId/approve/",
+                payload = JSONObject().put("approval_remarks", notes.orEmpty()),
+                onQueued = {
+                    repository.approveExeat(exeatId, approverName, notes)
+                }
+            )
         }
     }
 
     fun rejectExeat(exeatId: String, approverName: String, reason: String) {
         viewModelScope.launch {
-            remoteAction("Exeat rejected") {
-                apiClient.post(
-                    "exeats/$exeatId/reject/",
-                    JSONObject().put("approval_remarks", reason)
-                )
-            }
+            remoteAction(
+                label = "Exeat rejected",
+                path = "exeats/$exeatId/reject/",
+                payload = JSONObject().put("approval_remarks", reason),
+                onQueued = {
+                    repository.rejectExeat(exeatId, approverName, reason)
+                }
+            )
         }
     }
 
@@ -733,18 +1198,36 @@ class MainViewModel(
         actorName: String
     ) {
         viewModelScope.launch {
-            remoteAction("Exeat request submitted") {
-                apiClient.post(
-                    "exeats/",
-                    JSONObject()
-                        .put("student_id", student.id)
-                        .put("exeat_type", category)
-                        .put("reason", reason)
-                        .put("destination", destination)
-                        .put("expected_departure", Instant.ofEpochMilli(departureTime).toString())
-                        .put("expected_return", Instant.ofEpochMilli(expectedReturnTime).toString())
-                )
-            }
+            remoteAction(
+                label = "Exeat request submitted",
+                path = "exeats/",
+                payload = JSONObject()
+                    .put("student_id", student.id)
+                    .put("exeat_type", category)
+                    .put("reason", reason)
+                    .put("destination", destination)
+                    .put("expected_departure", Instant.ofEpochMilli(departureTime).toString())
+                    .put("expected_return", Instant.ofEpochMilli(expectedReturnTime).toString()),
+                onQueued = { queueId ->
+                    repository.submitExeat(
+                        ExeatRequest(
+                            id = "pending_$queueId",
+                            studentId = student.id,
+                            studentName = student.fullName,
+                            studentIndexNumber = student.studentId,
+                            houseId = student.houseId,
+                            category = category.uppercase(),
+                            reason = reason,
+                            destination = destination,
+                            departureTime = departureTime,
+                            expectedReturnTime = expectedReturnTime,
+                            status = "QUEUED"
+                        ),
+                        actorRole = "Housemaster",
+                        actorName = actorName
+                    )
+                }
+            )
         }
     }
 
@@ -796,10 +1279,12 @@ class MainViewModel(
             }
         }
         viewModelScope.launch {
-            remoteAction("Exeat action completed") {
-                apiClient.post(endpoint, payload)
-                onSuccess()
-            }
+            remoteAction(
+                label = "Exeat action completed",
+                path = endpoint,
+                payload = payload,
+                onSuccess = { onSuccess() }
+            )
         }
     }
 
@@ -890,14 +1375,28 @@ class MainViewModel(
         movementType: String
     ) {
         viewModelScope.launch {
-            remoteAction("Gate movement recorded") {
-                val route = if (movementType == "DEPARTURE") "gate/depart/" else "gate/return/"
-                val passId = exeatId
-                    ?: throw IllegalArgumentException("A verified exeat pass is required to record movement.")
-                apiClient.post(route, JSONObject().put("exeat_id", passId))
+            val route = if (movementType == "DEPARTURE") "gate/depart/" else "gate/return/"
+            val passId = exeatId
+            if (passId == null) {
+                syncManager.reportActionError(
+                    "Gate movement was not recorded: A verified exeat pass is required."
+                )
+                return@launch
+            }
+            remoteAction(
+                label = "Gate movement recorded",
+                path = route,
+                payload = JSONObject().put("exeat_id", passId),
+                onSuccess = {
                 _scanMessage.value = "Movement recorded by the school server for ${student.fullName}."
                 _gateScanResult.value = null
-            }
+                },
+                onQueued = {
+                    _scanMessage.value =
+                        "Movement saved on this device and queued until the server is reachable."
+                    _gateScanResult.value = null
+                }
+            )
         }
     }
 
@@ -909,7 +1408,16 @@ class MainViewModel(
                 sessionDataMutex.withLock {
                     if (!apiClient.hasSession) return@withLock
                     syncManager.updateConfig(apiClient.baseUrl)
+                    currentUserId?.let { ownerId ->
+                        val pendingCount = repository.remoteMutationOutboxDao.countFor(
+                            ownerId,
+                            apiClient.baseUrl
+                        )
+                        syncManager.updatePendingOutboxCount(pendingCount)
+                    }
+                    var outboxWarning: String? = null
                     syncManager.performSync {
+                        outboxWarning = processRemoteMutationOutbox()
                         val snapshot = dataSync.refresh { capabilities, features ->
                             val newRole = userRoleFromServerRole(
                                 capabilities.optString("role")
@@ -932,7 +1440,9 @@ class MainViewModel(
                         _selectedHouseId.value = snapshot.defaultHouseId
                         setApiPermissions(snapshot.capabilities, snapshot.features)
                     }
+                    outboxWarning?.let(syncManager::reportActionWarning)
                 }
+                processRollCallOutbox()
             } catch (_: IOException) {
                 // SyncManager publishes the server error to the sync status flow.
             } catch (_: IllegalStateException) {
@@ -941,11 +1451,104 @@ class MainViewModel(
         }
     }
 
-    private suspend fun remoteAction(label: String, action: suspend () -> Unit) {
-        try {
-            action()
-            syncManager.reportActionSuccess("$label on the school server.")
+    private suspend fun processRemoteMutationOutbox(): String? {
+        val ownerId = currentUserId ?: return null
+        return remoteMutationOutboxMutex.withLock {
+            val dao = repository.remoteMutationOutboxDao
+            val actions = dao.getFor(ownerId, apiClient.baseUrl)
+            var warning = actions.firstOrNull { it.lastError != null }?.let {
+                "A queued change needs attention: ${it.lastError}"
+            }
+            for (action in actions) {
+                if (action.lastError != null) continue
+                try {
+                    apiClient.post(
+                        action.path,
+                        JSONObject(action.payloadJson),
+                        idempotencyKey = action.id
+                    )
+                    dao.delete(action.id)
+                } catch (error: IOException) {
+                    val permanentFailure =
+                        error is DjangoApiException &&
+                            error.statusCode in 400..499 &&
+                            error.statusCode !in setOf(401, 408, 429)
+                    dao.update(
+                        action.copy(
+                            attempts = action.attempts + 1,
+                            lastError = if (permanentFailure) error.message else null
+                        )
+                    )
+                    if (!permanentFailure) throw error
+                    warning = "A queued change needs attention: ${error.message ?: "the server rejected it."}"
+                } catch (error: IllegalStateException) {
+                    dao.update(
+                        action.copy(
+                            attempts = action.attempts + 1,
+                            lastError = error.message ?: "Invalid queued request."
+                        )
+                    )
+                    warning = "A queued change needs attention: ${error.message ?: "invalid request."}"
+                }
+            }
+            syncManager.updatePendingOutboxCount(
+                dao.countFor(ownerId, apiClient.baseUrl)
+            )
+            warning
+        }
+    }
+
+    private suspend fun submitRemoteMutation(
+        label: String,
+        path: String,
+        payload: JSONObject,
+        onSuccess: suspend (JSONObject) -> Unit = {},
+        onQueued: suspend (String) -> Unit = {}
+    ): Boolean {
+        val itemId = UUID.randomUUID().toString()
+        val response = try {
+            apiClient.post(path, payload, idempotencyKey = itemId)
+        } catch (error: IOException) {
+            if (error is DjangoApiException && error.statusCode < 500) throw error
+            val ownerId = currentUserId
+                ?: throw IllegalStateException("Sign in before saving changes for delivery.")
+            val dao = repository.remoteMutationOutboxDao
+            dao.insert(
+                RemoteMutationOutboxItem(
+                    id = itemId,
+                    ownerId = ownerId,
+                    tenantUrl = apiClient.baseUrl,
+                    path = path,
+                    payloadJson = payload.toString(),
+                    attempts = 0,
+                    lastError = null,
+                    createdAt = System.currentTimeMillis()
+                )
+            )
+            val pendingCount = dao.countFor(ownerId, apiClient.baseUrl)
+            syncManager.reportActionQueued(
+                "$label saved on this device and queued for delivery.",
+                pendingCount
+            )
+            onQueued(itemId)
             triggerSync()
+            return false
+        }
+        onSuccess(response)
+        syncManager.reportActionSuccess("$label on the school server.")
+        triggerSync()
+        return true
+    }
+
+    private suspend fun remoteAction(
+        label: String,
+        path: String,
+        payload: JSONObject = JSONObject(),
+        onSuccess: suspend (JSONObject) -> Unit = {},
+        onQueued: suspend (String) -> Unit = {}
+    ) {
+        try {
+            submitRemoteMutation(label, path, payload, onSuccess, onQueued)
         } catch (error: IOException) {
             syncManager.reportActionError("$label failed: ${error.message ?: "server unavailable."}")
         } catch (error: IllegalStateException) {
@@ -967,6 +1570,9 @@ class MainViewModel(
                 }
                 _apiPermissions.value = ApiPermissions()
                 _bedSpaces.value = emptyList()
+                currentUserId = null
+                _pendingRollCallCount.value = 0
+                _rollCallOutboxMessage.value = null
                 _currentRole.value = UserRole.HOUSEMASTER
                 _selectedHouseId.value = null
                 _serverDashboardMetrics.value = null

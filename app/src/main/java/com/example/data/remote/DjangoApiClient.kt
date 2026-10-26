@@ -57,6 +57,17 @@ class DjangoApiClient(context: Context) {
     val configuredSchoolName: String
         get() = preferences.getString(KEY_SCHOOL_NAME, "").orEmpty()
 
+    fun rememberSchoolSelection(baseUrl: String, schoolName: String) {
+        check(!tenantConfigured) {
+            "This device already has a school configured. Contact the administrator to change it."
+        }
+        require(schoolName.isNotBlank()) { "Verify the school before saving its server URL." }
+        preferences.edit()
+            .putString(KEY_BASE_URL, normalizeBaseUrl(baseUrl))
+            .putString(KEY_SCHOOL_NAME, schoolName.trim())
+            .apply()
+    }
+
     suspend fun login(
         baseUrl: String,
         username: String,
@@ -175,13 +186,53 @@ class DjangoApiClient(context: Context) {
             execute(baseUrl + "/" + path.trimStart('/') + suffix, "GET", null, true)
         }
 
-    suspend fun post(path: String, payload: JSONObject = JSONObject()): JSONObject =
+    suspend fun download(path: String, query: Map<String, String> = emptyMap()): ByteArray =
+        withContext(Dispatchers.IO) {
+            val queryString = query.entries.joinToString("&") {
+                "${java.net.URLEncoder.encode(it.key, Charsets.UTF_8.name())}=" +
+                    java.net.URLEncoder.encode(it.value, Charsets.UTF_8.name())
+            }
+            val suffix = if (queryString.isEmpty()) "" else "?$queryString"
+            val token = tokenStore.read()
+                ?: throw DjangoApiException(401, "authentication_required", "Sign in to continue.")
+            val request = Request.Builder()
+                .url(baseUrl + "/" + path.trimStart('/') + suffix)
+                .header("Accept", "*/*")
+                .header("X-App-Version", BuildConfig.VERSION_NAME)
+                .header("Authorization", "Bearer $token")
+                .get()
+                .build()
+            http.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val responseText = response.body?.string().orEmpty()
+                    val error = runCatching { JSONObject(responseText).optJSONObject("error") }
+                        .getOrNull()
+                    if (response.code == 401) expireSession()
+                    throw DjangoApiException(
+                        response.code,
+                        error?.optString("code").orEmpty().ifBlank { "http_${response.code}" },
+                        error?.optString("message").orEmpty().ifBlank {
+                            "The school API request failed (HTTP ${response.code})."
+                        }
+                    )
+                }
+                response.body?.bytes()
+                    ?: throw IOException("The school API returned an empty export.")
+            }
+        }
+
+    suspend fun post(
+        path: String,
+        payload: JSONObject = JSONObject(),
+        idempotencyKey: String? = null
+    ): JSONObject =
         withContext(Dispatchers.IO) {
             execute(
                 baseUrl + "/" + path.trimStart('/'),
                 "POST",
                 payload,
-                authenticated = true
+                authenticated = true,
+                idempotencyKey = idempotencyKey
             )
         }
 
@@ -207,7 +258,8 @@ class DjangoApiClient(context: Context) {
         url: String,
         method: String,
         payload: JSONObject?,
-        authenticated: Boolean
+        authenticated: Boolean,
+        idempotencyKey: String? = null
     ): JSONObject {
         val builder = Request.Builder()
             .url(url)
@@ -221,7 +273,7 @@ class DjangoApiClient(context: Context) {
         val body = payload?.toString()
             ?.toRequestBody("application/json; charset=utf-8".toMediaType())
         if (method == "POST") {
-            builder.header("Idempotency-Key", UUID.randomUUID().toString())
+            builder.header("Idempotency-Key", idempotencyKey ?: UUID.randomUUID().toString())
         }
         builder.method(method, body)
 

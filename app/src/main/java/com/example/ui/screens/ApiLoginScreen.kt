@@ -41,7 +41,7 @@ fun ApiLoginScreen(
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var isSigningIn by remember { mutableStateOf(false) }
     var verifiedSchoolName by remember {
-        mutableStateOf(apiClient.configuredSchoolName.takeIf { apiClient.tenantConfigured })
+        mutableStateOf(apiClient.configuredSchoolName.takeIf(String::isNotBlank))
     }
     var isVerifyingSchool by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -77,30 +77,31 @@ fun ApiLoginScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(Modifier.height(24.dp))
-            OutlinedTextField(
-                value = apiUrl,
-                onValueChange = {
-                    apiUrl = it
-                    verifiedSchoolName = null
-                    errorMessage = null
-                },
-                label = { Text("School server URL") },
-                placeholder = { Text("https://atebubushs.ecreativesys.com/api/v1") },
-                readOnly = apiClient.tenantConfigured,
-                supportingText = {
-                    Text(
-                        if (apiClient.tenantConfigured) {
-                            "School server setup is locked. Contact the administrator if this device must be reconfigured."
-                        } else {
-                            "The app is preconfigured for Atebubu Senior High at atebubushs.ecreativesys.com. " +
-                                "Production uses HTTPS; the app adds /api/v1 if omitted."
-                        }
-                    )
-                },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-            if (!apiClient.tenantConfigured) {
+            if (apiClient.tenantConfigured) {
+                Text(
+                    text = "School: ${apiClient.configuredSchoolName}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            } else {
+                OutlinedTextField(
+                    value = apiUrl,
+                    onValueChange = {
+                        apiUrl = it
+                        verifiedSchoolName = null
+                        errorMessage = null
+                    },
+                    label = { Text("School server URL") },
+                    placeholder = { Text("https://atebubushs.ecreativesys.com/api/v1") },
+                    supportingText = {
+                        Text(
+                            "Choose the school server during first-time setup. Production uses HTTPS; " +
+                                "the app adds /api/v1 if omitted."
+                        )
+                    },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
                 Spacer(Modifier.height(8.dp))
                 OutlinedButton(
                     onClick = {
@@ -110,11 +111,14 @@ fun ApiLoginScreen(
                         scope.launch {
                             try {
                                 val preview = apiClient.previewSchool(apiUrl)
-                                verifiedSchoolName = preview.optJSONObject("school")
+                                val schoolName = preview.optJSONObject("school")
                                     ?.optString("name")
                                     ?.takeIf(String::isNotBlank)
-                                if (verifiedSchoolName == null) {
+                                verifiedSchoolName = schoolName
+                                if (schoolName == null) {
                                     errorMessage = "The server did not identify a school."
+                                } else {
+                                    apiClient.rememberSchoolSelection(apiUrl, schoolName)
                                 }
                             } catch (error: Exception) {
                                 verifiedSchoolName = null

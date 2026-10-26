@@ -1,6 +1,9 @@
 package com.example
 
 import android.os.Bundle
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -40,12 +43,14 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
@@ -74,6 +79,7 @@ import com.example.ui.screens.ReportsAuditScreen
 import com.example.ui.screens.RollCallScreen
 import com.example.ui.screens.RollCallHistoryScreen
 import com.example.ui.screens.StudentDirectoryScreen
+import com.example.ui.screens.SmsCampaignScreen
 import com.example.ui.theme.GoldAccent
 import com.example.ui.theme.SHSBoardingTheme
 import com.example.ui.viewmodel.AppScreen
@@ -114,6 +120,7 @@ fun SHSAppRoot(viewModel: MainViewModel, apiClient: DjangoApiClient) {
     val metrics by viewModel.dashboardMetrics.collectAsStateWithLifecycle()
     val unreadNotificationCount by viewModel.unreadNotificationCount.collectAsStateWithLifecycle()
     val sessionExpired by apiClient.sessionExpired.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     var moreMenuExpanded by remember { mutableStateOf(false) }
     var checkingSession by remember { mutableStateOf(true) }
     var authenticated by remember { mutableStateOf(false) }
@@ -127,11 +134,41 @@ fun SHSAppRoot(viewModel: MainViewModel, apiClient: DjangoApiClient) {
             add(AppScreen.ROLL_CALL_HISTORY to ("Roll-call history" to Icons.Default.History))
         }
         add(AppScreen.NOTIFICATIONS to ("Notifications" to Icons.Default.Notifications))
-        if (permissions.isAdmin) {
-            add(AppScreen.REPORTS_SYNC to ("Administration & sync" to Icons.Default.Analytics))
+        if (permissions.isAdmin || permissions.reports || permissions.auditView) {
+            add(AppScreen.REPORTS_SYNC to ("Reports & audit" to Icons.Default.Analytics))
+        }
+        if (permissions.smsDispatchEnabled) {
+            add(AppScreen.SMS_CAMPAIGNS to ("SMS campaigns" to Icons.Default.Notifications))
         }
     }
     val moreScreens = moreItems.mapTo(mutableSetOf()) { it.first }
+
+    DisposableEffect(authenticated, context, viewModel) {
+        if (!authenticated) {
+            onDispose {}
+        } else {
+            val connectivity = context.getSystemService(ConnectivityManager::class.java)
+            var wasValidated = false
+            val callback = object : ConnectivityManager.NetworkCallback() {
+                override fun onCapabilitiesChanged(
+                    network: Network,
+                    networkCapabilities: NetworkCapabilities
+                ) {
+                    val validated = networkCapabilities.hasCapability(
+                        NetworkCapabilities.NET_CAPABILITY_VALIDATED
+                    )
+                    if (validated && !wasValidated) viewModel.triggerSync()
+                    wasValidated = validated
+                }
+
+                override fun onLost(network: Network) {
+                    wasValidated = false
+                }
+            }
+            connectivity.registerDefaultNetworkCallback(callback)
+            onDispose { connectivity.unregisterNetworkCallback(callback) }
+        }
+    }
 
     LaunchedEffect(apiClient) {
         viewModel.clearCachedSchoolData()
@@ -154,6 +191,7 @@ fun SHSAppRoot(viewModel: MainViewModel, apiClient: DjangoApiClient) {
                     capabilities,
                     session.optJSONObject("features")
                 )
+                viewModel.setAuthenticatedUserId(user?.optString("id"))
                 authenticated = true
                 viewModel.loadNotifications()
                 viewModel.triggerSync()
@@ -190,7 +228,9 @@ fun SHSAppRoot(viewModel: MainViewModel, apiClient: DjangoApiClient) {
             AppScreen.OPERATIONS -> true
             AppScreen.ROLL_CALL -> permissions.rollCall
             AppScreen.EXEATS -> permissions.exeatsView
-            AppScreen.REPORTS_SYNC -> permissions.isAdmin
+            AppScreen.REPORTS_SYNC ->
+                permissions.isAdmin || permissions.reports || permissions.auditView
+            AppScreen.SMS_CAMPAIGNS -> permissions.smsDispatchEnabled
             else -> currentScreen in moreScreens
         }
         if (!canAccessScreen) {
@@ -222,6 +262,7 @@ fun SHSAppRoot(viewModel: MainViewModel, apiClient: DjangoApiClient) {
                     user?.optJSONObject("capabilities"),
                     session.optJSONObject("features")
                 )
+                viewModel.setAuthenticatedUserId(user?.optString("id"))
                 viewModel.loadNotifications()
                 viewModel.triggerSync()
             }
@@ -236,6 +277,8 @@ fun SHSAppRoot(viewModel: MainViewModel, apiClient: DjangoApiClient) {
             RoleSelectorBar(
                 currentRole = currentRole,
                 syncStatus = syncState.syncStatusMessage,
+                isOnline = syncState.isOnline,
+                pendingOutboxCount = syncState.pendingOutboxCount,
                 onSyncClick = {
                     if (permissions.isAdmin) viewModel.navigateTo(AppScreen.REPORTS_SYNC)
                 },
@@ -337,7 +380,8 @@ fun SHSAppRoot(viewModel: MainViewModel, apiClient: DjangoApiClient) {
                     AppScreen.OPERATIONS -> true
                     AppScreen.ROLL_CALL -> permissions.rollCall
                     AppScreen.EXEATS -> permissions.exeatsView
-                    AppScreen.REPORTS_SYNC -> permissions.isAdmin
+                    AppScreen.REPORTS_SYNC ->
+                        permissions.isAdmin || permissions.reports || permissions.auditView
                     else -> screen in moreScreens
                 }
                 if (!canRenderScreen) {
@@ -361,7 +405,12 @@ fun SHSAppRoot(viewModel: MainViewModel, apiClient: DjangoApiClient) {
                         AppScreen.OPERATIONS -> OperationsHubScreen(viewModel = viewModel)
                         AppScreen.ROLL_CALL_HISTORY -> RollCallHistoryScreen(viewModel = viewModel)
                         AppScreen.NOTIFICATIONS -> NotificationsScreen(viewModel = viewModel)
-                        AppScreen.REPORTS_SYNC -> ReportsAuditScreen(viewModel = viewModel)
+                        AppScreen.REPORTS_SYNC -> ReportsAuditScreen(
+                            viewModel = viewModel,
+                            canViewReports = permissions.reports,
+                            canViewAudit = permissions.auditView
+                        )
+                        AppScreen.SMS_CAMPAIGNS -> SmsCampaignScreen(viewModel = viewModel)
                     }
                 }
             }

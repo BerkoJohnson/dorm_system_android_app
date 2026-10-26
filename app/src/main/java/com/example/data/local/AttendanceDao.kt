@@ -23,4 +23,7 @@ interface AttendanceDao {
 
     @Query("DELETE FROM attendance_records WHERE dateStr = :dateStr AND roomId = :roomId AND sessionType = :sessionType")
     suspend fun deleteAttendanceForRoomSession(dateStr: String, roomId: String, sessionType: String)
+
+    @Query("DELETE FROM attendance_records")
+    suspend fun clear()
 }
