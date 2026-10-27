@@ -29,7 +29,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.foundation.Image
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -38,7 +37,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -46,15 +44,22 @@ import com.example.data.model.UserRole
 import com.example.ui.theme.EmeraldGreen
 import com.example.ui.theme.GoldAccent
 import com.example.ui.theme.NavyPrimary
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @Composable
 fun RoleSelectorBar(
     currentRole: UserRole,
     syncStatus: String,
     isOnline: Boolean,
+    lastSyncTime: Long?,
     pendingOutboxCount: Int,
+    failedOutboxCount: Int,
     onSyncClick: () -> Unit,
     onLogoutClick: () -> Unit,
+    schoolName: String = "School",
+    schoolLogoUrl: String = "",
     modifier: Modifier = Modifier
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -64,8 +69,10 @@ fun RoleSelectorBar(
         color = NavyPrimary,
         shadowElevation = 0.dp
     ) {
-        val isError = !isOnline && !syncStatus.contains("queued", ignoreCase = true)
+        val isError = failedOutboxCount > 0 ||
+            (!isOnline && !syncStatus.contains("queued", ignoreCase = true))
         val statusColor = when {
+            failedOutboxCount > 0 -> Color(0xFFEF4444)
             isError -> Color(0xFFEF4444)
             !isOnline -> GoldAccent
             else -> EmeraldGreen
@@ -83,10 +90,12 @@ fun RoleSelectorBar(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Image(
-                painter = painterResource(id = com.example.R.drawable.eden_logo),
-                contentDescription = "Eden Creative Systems",
-                modifier = Modifier.size(32.dp)
+            TenantLogo(
+                logoUrl = schoolLogoUrl,
+                contentDescription = "$schoolName logo",
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(8.dp))
             )
 
             Box {
@@ -100,8 +109,12 @@ fun RoleSelectorBar(
                 ) {
                     val icon = when (currentRole) {
                         UserRole.HOUSEMASTER -> Icons.Default.MeetingRoom
+                        UserRole.ASSISTANT_HOUSEMASTER -> Icons.Default.MeetingRoom
+                        UserRole.ACTING_HOUSEMASTER -> Icons.Default.MeetingRoom
                         UserRole.HOUSE_TUTOR -> Icons.Default.MeetingRoom
                         UserRole.SENIOR_HOUSEMASTER -> Icons.Default.AdminPanelSettings
+                        UserRole.HEADMASTER -> Icons.Default.AdminPanelSettings
+                        UserRole.MATRON -> Icons.Default.LocalHospital
                         UserRole.MEDICAL -> Icons.Default.LocalHospital
                         UserRole.GATE_OFFICER -> Icons.Default.Security
                         UserRole.ADMINISTRATOR -> Icons.Default.AdminPanelSettings
@@ -156,11 +169,7 @@ fun RoleSelectorBar(
                 }
             }
 
-            if (
-                currentRole == UserRole.ADMINISTRATOR ||
-                pendingOutboxCount > 0 ||
-                !isOnline
-            ) Row(
+            Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .clip(RoundedCornerShape(999.dp))
@@ -178,10 +187,18 @@ fun RoleSelectorBar(
                         .background(statusColor)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
+                Column {
                 Text(
                     text = when {
-                        pendingOutboxCount > 0 -> "Queued: $pendingOutboxCount"
-                        isError -> "Offline"
+                        failedOutboxCount > 0 ->
+                            "Sync attention · Failed: $failedOutboxCount"
+                        syncStatus.contains("suspend", ignoreCase = true) ||
+                            syncStatus.contains("denied", ignoreCase = true) ||
+                            syncStatus.contains("revoked", ignoreCase = true) ->
+                            "Access restricted"
+                        pendingOutboxCount > 0 && !isOnline ->
+                            "Offline · Queued: $pendingOutboxCount"
+                        pendingOutboxCount > 0 -> "Queued: $pendingOutboxCount unsynced"
                         !isOnline -> "Offline"
                         else -> "Online"
                     },
@@ -190,6 +207,25 @@ fun RoleSelectorBar(
                     fontWeight = FontWeight.Medium,
                     maxLines = 1
                 )
+                if (pendingOutboxCount > 0) {
+                    Text(
+                        text = "Pending: $pendingOutboxCount",
+                        color = Color(0xFFB8C7D8),
+                        fontSize = 9.sp,
+                        maxLines = 1
+                    )
+                }
+                val lastSynced = lastSyncTime?.let {
+                    SimpleDateFormat("MMM d, HH:mm", Locale.getDefault())
+                        .format(Date(it))
+                } ?: "never"
+                Text(
+                    text = "Last sync: $lastSynced",
+                    color = Color(0xFFB8C7D8),
+                    fontSize = 9.sp,
+                    maxLines = 1
+                )
+                }
                 Spacer(modifier = Modifier.width(6.dp))
                 Icon(
                     imageVector = Icons.Default.Sync,

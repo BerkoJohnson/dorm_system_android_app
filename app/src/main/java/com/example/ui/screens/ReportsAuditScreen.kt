@@ -1,5 +1,11 @@
 package com.example.ui.screens
 
+import android.content.Context
+import android.content.Intent
+import android.print.PrintAttributes
+import android.print.PrintManager
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -12,10 +18,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -41,6 +49,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
@@ -52,12 +61,93 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.ui.theme.EmeraldGreen
 import com.example.ui.theme.GoldAccent
 import com.example.ui.theme.NavyPrimary
+import com.example.data.model.MobileReport
 import com.example.ui.viewmodel.MainViewModel
 import kotlinx.coroutines.launch
 import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
+private fun printReport(context: Context, report: MobileReport) {
+    val webView = WebView(context)
+    webView.webViewClient = object : WebViewClient() {
+        override fun onPageFinished(view: WebView, url: String?) {
+            val printManager = context.getSystemService(Context.PRINT_SERVICE) as PrintManager
+            printManager.print(
+                report.title,
+                view.createPrintDocumentAdapter(report.title),
+                PrintAttributes.Builder()
+                    .setMediaSize(PrintAttributes.MediaSize.ISO_A4)
+                    .setColorMode(PrintAttributes.COLOR_MODE_COLOR)
+                    .build()
+            )
+        }
+    }
+    val body = buildString {
+        append("<h1>${report.title.escapeHtml()}</h1>")
+        append("<p>Generated: ${report.generatedAt.escapeHtml()}</p>")
+        appendReportTable(this, report.headers, report.rows)
+        report.sections.forEach { section ->
+            append("<h2>${section.title.escapeHtml()}</h2>")
+            appendReportTable(this, section.headers, section.rows)
+        }
+    }
+    webView.loadDataWithBaseURL(
+        null,
+        "<html><head><meta charset=\"utf-8\"><style>" +
+            "body{font-family:sans-serif;padding:24px}table{border-collapse:collapse;width:100%}" +
+            "th,td{border:1px solid #94a3b8;padding:6px;text-align:left}" +
+            "</style></head><body>$body</body></html>",
+        "text/html",
+        "UTF-8",
+        null
+    )
+}
+
+private fun appendReportTable(
+    target: StringBuilder,
+    headers: List<String>,
+    rows: List<List<String>>
+) {
+    if (headers.isEmpty() && rows.isEmpty()) return
+    target.append("<table><thead><tr>")
+    headers.forEach { target.append("<th>${it.escapeHtml()}</th>") }
+    target.append("</tr></thead><tbody>")
+    rows.forEach { row ->
+        target.append("<tr>")
+        row.forEach { target.append("<td>${it.escapeHtml()}</td>") }
+        target.append("</tr>")
+    }
+    target.append("</tbody></table>")
+}
+
+private fun String.escapeHtml(): String =
+    replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("\"", "&quot;")
+        .replace("'", "&#39;")
+
+@Composable
+internal fun ReportRows(rows: List<List<String>>) {
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = 360.dp)
+            .testTag("report-rows")
+    ) {
+        items(rows) { row ->
+            Text(
+                text = row.joinToString("  •  "),
+                fontSize = 14.sp,
+                color = Color(0xFF475569),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
 
 @Composable
 fun ReportsAuditScreen(
@@ -79,7 +169,7 @@ fun ReportsAuditScreen(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val exportLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("text/csv")
+        ActivityResultContracts.CreateDocument("*/*")
     ) { uri ->
         if (uri != null) {
             coroutineScope.launch {
@@ -114,11 +204,11 @@ fun ReportsAuditScreen(
                 Text(
                     text = operationsMessage.orEmpty(),
                     color = Color(0xFFB91C1C),
-                    fontSize = 12.sp
+                    fontSize = 14.sp
                 )
             }
         }
-        // Section: Configurable Django REST API Sync
+        // School data status and refresh actions.
         if (syncState.apiBaseUrl.isNotBlank()) item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -144,8 +234,8 @@ fun ReportsAuditScreen(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "CENTRAL DJANGO BACKEND SYNC",
-                                fontSize = 12.sp,
+                                text = "SCHOOL DATA SYNC",
+                                fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = NavyPrimary,
                                 maxLines = 2,
@@ -160,7 +250,7 @@ fun ReportsAuditScreen(
                             Text(
                                 text = if (syncState.isOnline) "ONLINE" else "OFFLINE",
                                 color = if (syncState.isOnline) EmeraldGreen else Color(0xFFB45309),
-                                fontSize = 10.sp,
+                                fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                             )
@@ -169,32 +259,26 @@ fun ReportsAuditScreen(
 
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    Text(
-                        text = syncState.apiBaseUrl,
-                        fontSize = 12.sp,
-                        color = Color(0xFF475569)
-                    )
-
                     Spacer(modifier = Modifier.height(10.dp))
 
                     val timeFormat = SimpleDateFormat("dd MMM yyyy, HH:mm:ss", Locale.getDefault())
                     Text(
-                        text = "Last Synchronized: ${
-                            syncState.lastSyncTime?.let { timeFormat.format(Date(it)) } ?: "Not synchronized yet"
+                        text = "Last synced: ${
+                            syncState.lastSyncTime?.let { timeFormat.format(Date(it)) } ?: "Not synced yet"
                         }",
-                        fontSize = 11.sp,
+                        fontSize = 14.sp,
                         color = Color(0xFF64748B)
                     )
                     Text(
-                        text = "Status: ${syncState.syncStatusMessage}",
-                        fontSize = 11.sp,
+                        text = "School data: ${syncState.syncStatusMessage}",
+                        fontSize = 14.sp,
                         color = NavyPrimary,
                         fontWeight = FontWeight.Medium
                     )
                     if (syncState.pendingOutboxCount > 0) {
                         Text(
                             text = "${syncState.pendingOutboxCount} change(s) waiting for delivery or attention",
-                            fontSize = 11.sp,
+                            fontSize = 14.sp,
                             color = Color(0xFFB45309),
                             fontWeight = FontWeight.Medium
                         )
@@ -216,7 +300,7 @@ fun ReportsAuditScreen(
                         ) {
                             Icon(imageVector = Icons.Default.Refresh, contentDescription = null, tint = GoldAccent, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("Refresh school data", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text("Refresh school data", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -245,7 +329,7 @@ fun ReportsAuditScreen(
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = "OFFICIAL BOARDING REPORTS",
-                            fontSize = 12.sp,
+                            fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,
                             color = NavyPrimary,
                             maxLines = 1,
@@ -257,7 +341,7 @@ fun ReportsAuditScreen(
 
                     Text(
                         text = "View server-generated report data and save a CSV export. Results respect your assigned data scope.",
-                        fontSize = 12.sp,
+                        fontSize = 14.sp,
                         color = Color(0xFF475569)
                     )
 
@@ -294,7 +378,7 @@ fun ReportsAuditScreen(
                                         },
                                         modifier = Modifier.weight(1f),
                                         enabled = !isLoadingReport
-                                    ) { Text(label, fontSize = 11.sp) }
+                                    ) { Text(label, fontSize = 14.sp) }
                                 }
                             }
                         }
@@ -311,48 +395,38 @@ fun ReportsAuditScreen(
                                 fontSize = 13.sp
                             )
                             current.metrics.forEach { (label, value) ->
-                                Text("$label: $value", fontSize = 12.sp, color = Color(0xFF475569))
+                                Text("$label: $value", fontSize = 14.sp, color = Color(0xFF475569))
                             }
                             if (current.headers.isNotEmpty()) {
                                 Text(
                                     text = current.headers.joinToString("  •  "),
                                     fontWeight = FontWeight.SemiBold,
-                                    fontSize = 11.sp,
+                                    fontSize = 14.sp,
                                     color = NavyPrimary
                                 )
-                                current.rows.take(5).forEach { row ->
-                                    Text(
-                                        text = row.joinToString("  •  "),
-                                        fontSize = 10.sp,
-                                        color = Color(0xFF475569),
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
+                                ReportRows(current.rows)
                             }
+                            Text(
+                                text = "Generated: ${current.generatedAt.ifBlank { "time not provided by server" }} · " +
+                                    "${current.rows.size + current.sections.sumOf { it.rows.size }} rows loaded",
+                                fontSize = 14.sp,
+                                color = Color(0xFF64748B)
+                            )
                             current.sections.forEach { section ->
                                 Text(
                                     section.title,
                                     fontWeight = FontWeight.SemiBold,
-                                    fontSize = 12.sp,
+                                    fontSize = 14.sp,
                                     color = NavyPrimary
                                 )
                                 if (section.headers.isNotEmpty()) {
                                     Text(
                                         section.headers.joinToString("  •  "),
                                         fontWeight = FontWeight.Medium,
-                                        fontSize = 10.sp
+                                        fontSize = 14.sp
                                     )
                                 }
-                                section.rows.take(5).forEach { row ->
-                                    Text(
-                                        row.joinToString("  •  "),
-                                        fontSize = 10.sp,
-                                        color = Color(0xFF475569),
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
+                                ReportRows(section.rows)
                             }
                             if (hasMoreReportRows) {
                                 Button(
@@ -377,6 +451,55 @@ fun ReportsAuditScreen(
                                 },
                                 modifier = Modifier.fillMaxWidth()
                             ) { Text("Save CSV export") }
+                            Button(
+                                onClick = {
+                                    exportFormat = "xlsx"
+                                    exportLauncher.launch(
+                                        "${current.title.lowercase().replace(' ', '-')}.xlsx"
+                                    )
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("Save Excel export") }
+                            Button(
+                                onClick = {
+                                    exportFormat = "pdf"
+                                    exportLauncher.launch(
+                                        "${current.title.lowercase().replace(' ', '-')}.pdf"
+                                    )
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("Save PDF") }
+                            Button(
+                                onClick = { printReport(context, current) },
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("Print report") }
+                            Button(
+                                onClick = {
+                                    coroutineScope.launch {
+                                        try {
+                                            val content = viewModel.downloadReport("csv")
+                                            val sendIntent = Intent(Intent.ACTION_SEND)
+                                                .setType("text/csv")
+                                                .putExtra(
+                                                    Intent.EXTRA_TEXT,
+                                                    content.toString(Charsets.UTF_8)
+                                                )
+                                            context.startActivity(
+                                                Intent.createChooser(sendIntent, "Share report")
+                                            )
+                                        } catch (error: IOException) {
+                                            viewModel.reportOperationsError(
+                                                "Could not share report: ${error.message}"
+                                            )
+                                        } catch (error: IllegalStateException) {
+                                            viewModel.reportOperationsError(
+                                                "Could not share report: ${error.message}"
+                                            )
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("Share CSV report") }
                         }
                     }
                 }
@@ -401,14 +524,14 @@ fun ReportsAuditScreen(
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = "SERVER AUDIT TRAIL",
-                            fontSize = 12.sp,
+                            fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,
                             letterSpacing = 1.sp,
                             color = Color(0xFF64748B)
                         )
                     }
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text("Recent server audit events", fontSize = 12.sp, color = Color(0xFF475569))
+                    Text("Recent school audit events", fontSize = 14.sp, color = Color(0xFF475569))
                     Spacer(modifier = Modifier.height(8.dp))
                     if (isLoadingAudit && auditEvents.isEmpty()) {
                         CircularProgressIndicator(modifier = Modifier.size(22.dp))
@@ -419,10 +542,10 @@ fun ReportsAuditScreen(
                                 .fillMaxWidth()
                                 .padding(vertical = 6.dp)
                         ) {
-                            Text(event.summary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            Text(event.summary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                             Text(
                                 "${event.action} · ${event.actor} · ${event.targetType} · ${event.createdAt}",
-                                fontSize = 10.sp,
+                                fontSize = 14.sp,
                                 color = Color(0xFF64748B)
                             )
                         }

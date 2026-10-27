@@ -24,5 +24,7 @@ data class Student(
     @ColumnInfo(defaultValue = "NULL")
     val assignedRoomId: String? = null,
     @ColumnInfo(defaultValue = "''")
-    val assignedRoomName: String = ""
+    val assignedRoomName: String = "",
+    @ColumnInfo(defaultValue = "''")
+    val photoUrl: String = ""
 )

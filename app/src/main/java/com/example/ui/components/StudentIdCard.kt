@@ -2,6 +2,7 @@ package com.example.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,10 +27,12 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
@@ -42,13 +45,26 @@ import com.example.data.model.Student
 import com.example.ui.theme.EmeraldGreen
 import com.example.ui.theme.GoldAccent
 import com.example.ui.theme.NavyPrimary
+import coil.compose.AsyncImage
+import java.time.LocalDate
+import java.time.ZoneId
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
 
 @Composable
 fun StudentIdCard(
     student: Student,
     house: House?,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    schoolName: String = "School",
+    schoolAddress: String = "",
+    schoolPhone: String = "",
+    schoolEmail: String = "",
+    schoolLogoUrl: String = ""
 ) {
+    val context = LocalContext.current
     Card(
         modifier = modifier
             .fillMaxWidth()
@@ -73,9 +89,9 @@ fun StudentIdCard(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    androidx.compose.foundation.Image(
-                        painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.eden_logo),
-                        contentDescription = "Eden Logo Emblem",
+                    TenantLogo(
+                        logoUrl = schoolLogoUrl,
+                        contentDescription = "$schoolName logo",
                         modifier = Modifier
                             .size(38.dp)
                             .clip(CircleShape)
@@ -86,17 +102,21 @@ fun StudentIdCard(
 
                     Column {
                         Text(
-                            text = "GHANA SENIOR HIGH SCHOOL",
+                            text = schoolName.ifBlank { "School" },
                             color = Color.White,
                             fontWeight = FontWeight.Bold,
                             fontSize = 13.sp,
-                            letterSpacing = 0.8.sp
+                            maxLines = 1
                         )
                         Text(
-                            text = "BOARDING DIVISION • OFFICIAL STUDENT PASS",
+                            text = listOf(schoolAddress, schoolPhone, schoolEmail)
+                                .filter(String::isNotBlank)
+                                .joinToString(" · ")
+                                .ifBlank { "BOARDING DIVISION • OFFICIAL STUDENT PASS" },
                             color = GoldAccent,
                             fontSize = 10.sp,
-                            fontWeight = FontWeight.SemiBold
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1
                         )
                     }
                 }
@@ -132,12 +152,23 @@ fun StudentIdCard(
                                 .border(2.dp, GoldAccent, CircleShape),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(
-                                text = initials,
-                                color = Color.White,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 18.sp
-                            )
+                            if (student.photoUrl.isNotBlank()) {
+                                AsyncImage(
+                                    model = student.photoUrl,
+                                    contentDescription = "${student.fullName} photo",
+                                    modifier = Modifier
+                                        .size(52.dp)
+                                        .clip(CircleShape),
+                                    contentScale = ContentScale.Crop
+                                )
+                            } else {
+                                Text(
+                                    text = initials,
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 18.sp
+                                )
+                            }
                         }
 
                         Spacer(modifier = Modifier.width(12.dp))
@@ -169,7 +200,8 @@ fun StudentIdCard(
                             modifier = Modifier.padding(end = 6.dp)
                         ) {
                             Text(
-                                text = "${student.classForm} • ${student.program}",
+                                text = "${student.classForm.ifBlank { "Form unknown" }} • " +
+                                    student.program.ifBlank { "Programme unknown" },
                                 color = Color(0xFF1D4ED8),
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Medium,
@@ -177,6 +209,23 @@ fun StudentIdCard(
                             )
                         }
                     }
+
+                    Text(
+                        text = "Guardian relationship: ${
+                            student.guardianRelationship.ifBlank { "Unknown" }
+                        }",
+                        fontSize = 10.sp,
+                        color = Color(0xFF475569)
+                    )
+                    Text(
+                        text = "Medical alert: ${
+                            student.emergencyNotes.ifBlank { "Unknown" }
+                        }",
+                        fontSize = 10.sp,
+                        color = if (student.emergencyNotes.isBlank() ||
+                            student.emergencyNotes == "Unknown"
+                        ) Color(0xFF64748B) else Color(0xFFB91C1C)
+                    )
 
                     Spacer(modifier = Modifier.height(8.dp))
 
@@ -202,7 +251,25 @@ fun StudentIdCard(
 
                     if (student.guardianPhone.isNotBlank()) {
                         Spacer(modifier = Modifier.height(4.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            modifier = Modifier.clickable {
+                                try {
+                                    context.startActivity(
+                                        Intent(
+                                            Intent.ACTION_DIAL,
+                                            Uri.fromParts("tel", student.guardianPhone, null)
+                                        )
+                                    )
+                                } catch (_: ActivityNotFoundException) {
+                                    Toast.makeText(
+                                        context,
+                                        "No phone app is available to dial this number.",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Icon(
                                 imageVector = Icons.Default.Call,
                                 contentDescription = null,
@@ -213,7 +280,7 @@ fun StudentIdCard(
                             Text(
                                 text = "Guardian: ${student.guardianPhone}",
                                 fontSize = 11.sp,
-                                color = Color(0xFF4B5563)
+                                color = Color(0xFF1D4ED8)
                             )
                         }
                     }
@@ -244,7 +311,11 @@ fun StudentIdCard(
                     }
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = if (student.qrCodeKey.isNotBlank()) "SCAN TO VERIFY" else "NOT AVAILABLE",
+                        text = if (student.qrCodeKey.isNotBlank()) {
+                            "IDENTIFY STUDENT · CHECK LIVE PASS"
+                        } else {
+                            "NOT AVAILABLE"
+                        },
                         fontSize = 9.sp,
                         fontWeight = FontWeight.Bold,
                         color = NavyPrimary,
@@ -288,12 +359,19 @@ fun StudentIdCard(
                 }
 
                 Text(
-                    text = "ACADEMIC YR 2024/2025",
+                    text = "ACADEMIC YR ${currentAcademicYear()}",
                     fontSize = 10.sp,
                     color = Color(0xFF9CA3AF),
                     fontWeight = FontWeight.Medium
                 )
             }
+
         }
     }
+}
+
+private fun currentAcademicYear(): String {
+    val today = LocalDate.now(ZoneId.of("Africa/Accra"))
+    val startYear = if (today.monthValue >= 9) today.year else today.year - 1
+    return "$startYear/${startYear + 1}"
 }

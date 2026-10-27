@@ -7,13 +7,16 @@ import android.util.Base64
 import com.example.BuildConfig
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import okhttp3.MultipartBody
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
+import org.json.JSONException
 import org.json.JSONObject
 import java.io.IOException
 import java.security.KeyStore
 import java.util.UUID
+import android.net.Uri
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -25,12 +28,20 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import java.util.concurrent.TimeUnit
 
 class DjangoApiException(
     val statusCode: Int,
     val errorCode: String,
     override val message: String
 ) : IOException(message)
+
+enum class SessionValidationFailure {
+    TRANSIENT,
+    INVALID_CREDENTIALS,
+    ACCESS_RESTRICTED,
+    UNEXPECTED
+}
 
 class DjangoApiClient(context: Context) {
     private val appContext = context.applicationContext
@@ -39,7 +50,9 @@ class DjangoApiClient(context: Context) {
     private val _sessionExpired = MutableStateFlow(false)
     val sessionExpired: StateFlow<Boolean> = _sessionExpired.asStateFlow()
     private val http = OkHttpClient.Builder()
-        .callTimeout(java.time.Duration.ofSeconds(30))
+        .callTimeout(10, TimeUnit.SECONDS)
+        .connectTimeout(5, TimeUnit.SECONDS)
+        .readTimeout(8, TimeUnit.SECONDS)
         .build()
 
     var baseUrl: String
@@ -49,7 +62,11 @@ class DjangoApiClient(context: Context) {
         }
 
     val hasSession: Boolean
-        get() = tokenStore.contains()
+        get() = tokenStore.contains() && try {
+            tokenStore.read() != null
+        } catch (_: IllegalStateException) {
+            false
+        }
 
     val tenantConfigured: Boolean
         get() = preferences.getBoolean(KEY_TENANT_CONFIGURED, false)
@@ -57,15 +74,130 @@ class DjangoApiClient(context: Context) {
     val configuredSchoolName: String
         get() = preferences.getString(KEY_SCHOOL_NAME, "").orEmpty()
 
+    val configuredSchoolAddress: String
+        get() = preferences.getString(KEY_SCHOOL_ADDRESS, "").orEmpty()
+
+    val configuredSchoolPhone: String
+        get() = preferences.getString(KEY_SCHOOL_PHONE, "").orEmpty()
+
+    val configuredSchoolEmail: String
+        get() = preferences.getString(KEY_SCHOOL_EMAIL, "").orEmpty()
+
+    val configuredSchoolLogoUrl: String
+        get() = preferences.getString(KEY_SCHOOL_LOGO_URL, "").orEmpty()
+
+    val lastSuccessfulAuthenticationAt: Long?
+        get() = preferences.getLong(KEY_LAST_AUTHENTICATION, 0L).takeIf { it > 0L }
+
+    val lastSuccessfulSyncAt: Long?
+        get() = preferences.getLong(KEY_LAST_SYNC, 0L).takeIf { it > 0L }
+
+    val offlineGracePeriodMillis: Long
+        get() = preferences.getInt(KEY_OFFLINE_GRACE_DAYS, DEFAULT_OFFLINE_GRACE_DAYS)
+            .coerceAtLeast(0)
+            .toLong() * MILLIS_PER_DAY
+
+    val accessRestrictionCode: String?
+        get() = preferences.getString(KEY_ACCESS_RESTRICTION, null)
+
+    fun configureOfflineGracePeriodDays(days: Int) {
+        require(days in 0..MAX_OFFLINE_GRACE_DAYS) {
+            "Offline grace period must be between 0 and $MAX_OFFLINE_GRACE_DAYS days."
+        }
+        preferences.edit().putInt(KEY_OFFLINE_GRACE_DAYS, days).apply()
+    }
+
+    fun hasUsableOfflineGrace(now: Long = System.currentTimeMillis()): Boolean {
+        val validatedAt = lastSuccessfulAuthenticationAt ?: return false
+        val syncedAt = lastSuccessfulSyncAt ?: return false
+        return now >= validatedAt &&
+            now - validatedAt <= offlineGracePeriodMillis &&
+            now >= syncedAt &&
+            now - syncedAt <= offlineGracePeriodMillis
+    }
+
+    fun cachedSessionForCurrentTenant(): JSONObject? {
+        val cached = tokenStore.readMetadata() ?: return null
+        val metadata = try {
+            JSONObject(cached)
+        } catch (_: JSONException) {
+            tokenStore.clearMetadata()
+            return null
+        }
+        if (metadata.optString(KEY_SESSION_TENANT) != baseUrl) return null
+        return metadata.optJSONObject(KEY_CACHED_SESSION)
+    }
+
+    fun recordSuccessfulValidation(session: JSONObject, now: Long = System.currentTimeMillis()) {
+        tokenStore.writeMetadata(
+            JSONObject()
+                .put(KEY_SESSION_TENANT, baseUrl)
+                .put(KEY_CACHED_SESSION, session)
+                .toString()
+        )
+        preferences.edit()
+            .putLong(KEY_LAST_AUTHENTICATION, now)
+            .remove(KEY_ACCESS_RESTRICTION)
+            .apply()
+    }
+
+    fun recordSuccessfulSync(now: Long = System.currentTimeMillis()) {
+        preferences.edit().putLong(KEY_LAST_SYNC, now).apply()
+    }
+
+    fun clearLastSuccessfulSync() {
+        preferences.edit().remove(KEY_LAST_SYNC).apply()
+    }
+
+    fun restrictOfflineStartup(reasonCode: String) {
+        preferences.edit().putString(KEY_ACCESS_RESTRICTION, reasonCode).apply()
+    }
+
+    fun clearAccessRestriction() {
+        preferences.edit().remove(KEY_ACCESS_RESTRICTION).apply()
+    }
+
+    fun classifySessionValidationFailure(error: Throwable): SessionValidationFailure =
+        when (error) {
+            is DjangoApiException -> when (error.statusCode) {
+                401 -> SessionValidationFailure.INVALID_CREDENTIALS
+                403 -> SessionValidationFailure.ACCESS_RESTRICTED
+                in 500..599, 408, 429 -> SessionValidationFailure.TRANSIENT
+                else -> SessionValidationFailure.UNEXPECTED
+            }
+            is IOException -> SessionValidationFailure.TRANSIENT
+            else -> SessionValidationFailure.UNEXPECTED
+        }
+
+    fun accessRestrictionMessage(errorCode: String): String = when {
+        errorCode.contains("suspend", ignoreCase = true) ||
+            errorCode.contains("inactive", ignoreCase = true) ->
+            "The school account is suspended or inactive. Cached records are preserved; contact the administrator."
+        errorCode.contains("tenant", ignoreCase = true) ||
+            errorCode.contains("school", ignoreCase = true) ->
+            "This account no longer has access to this school. Cached records are preserved."
+        errorCode.contains("permission", ignoreCase = true) ||
+            errorCode.contains("forbidden", ignoreCase = true) ->
+            "School permissions were denied or revoked. Revalidate access with the school server; cached records are preserved."
+        else ->
+            "The school server denied access. Revalidate the account or contact the administrator; cached records are preserved."
+    }
+
     fun rememberSchoolSelection(baseUrl: String, schoolName: String) {
+        rememberSchoolSelection(
+            baseUrl,
+            JSONObject().put("name", schoolName)
+        )
+    }
+
+    fun rememberSchoolSelection(baseUrl: String, school: JSONObject) {
         check(!tenantConfigured) {
             "This device already has a school configured. Contact the administrator to change it."
         }
+        val schoolName = school.optString("name")
         require(schoolName.isNotBlank()) { "Verify the school before saving its server URL." }
-        preferences.edit()
-            .putString(KEY_BASE_URL, normalizeBaseUrl(baseUrl))
-            .putString(KEY_SCHOOL_NAME, schoolName.trim())
-            .apply()
+        this.baseUrl = baseUrl
+        persistSchoolProfile(school)
     }
 
     suspend fun login(
@@ -146,6 +278,34 @@ class DjangoApiClient(context: Context) {
                     }
                 )
             }
+            val previousSession = try {
+                cachedSessionForCurrentTenant()
+            } catch (_: IllegalStateException) {
+                null
+            }
+            val previousUser = previousSession?.optJSONObject("user")
+            val previousUserId = previousUser?.optString("id").orEmpty()
+            val newUserId = user?.optString("id").orEmpty()
+            val cachedAccessMatches = SessionAccessPolicy.matches(
+                previousUser,
+                user,
+                previousSession?.optJSONObject("features"),
+                response.optJSONObject("features")
+            )
+            if (
+                previousUserId == newUserId &&
+                previousUserId.isNotBlank() &&
+                cachedAccessMatches
+            ) {
+                recordSuccessfulValidation(response)
+            } else {
+                tokenStore.clearMetadata()
+                preferences.edit()
+                    .remove(KEY_LAST_AUTHENTICATION)
+                    .remove(KEY_LAST_SYNC)
+                    .remove(KEY_ACCESS_RESTRICTION)
+                    .apply()
+            }
             if (!tenantConfigured) {
                 preferences.edit()
                     .putBoolean(KEY_TENANT_CONFIGURED, true)
@@ -154,6 +314,7 @@ class DjangoApiClient(context: Context) {
             } else if (configuredSchoolName != schoolName) {
                 preferences.edit().putString(KEY_SCHOOL_NAME, schoolName).apply()
             }
+            response.optJSONObject("school")?.let { persistSchoolProfile(it) }
             response
         }
 
@@ -236,6 +397,65 @@ class DjangoApiClient(context: Context) {
             )
         }
 
+    suspend fun uploadImage(path: String, uri: Uri): JSONObject =
+        withContext(Dispatchers.IO) {
+            val resolver = appContext.contentResolver
+            val bytes = resolver.openInputStream(uri)?.use { it.readBytes() }
+                ?: throw IOException("The selected photo could not be opened.")
+            if (bytes.isEmpty()) throw IOException("The selected photo is empty.")
+            val mediaType = resolver.getType(uri)?.toMediaType()
+                ?: "application/octet-stream".toMediaType()
+            require(mediaType.type == "image") { "Select an image file for the student photo." }
+            require(bytes.size <= MAX_STUDENT_PHOTO_BYTES) {
+                "The student photo must be 10 MB or smaller."
+            }
+            val token = tokenStore.read()
+                ?: throw DjangoApiException(401, "authentication_required", "Sign in to continue.")
+            val requestBody = MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart(
+                    "photo",
+                    "student-photo",
+                    bytes.toRequestBody(mediaType)
+                )
+                .build()
+            val request = Request.Builder()
+                .url(baseUrl + "/" + path.trimStart('/'))
+                .header("Accept", "application/json")
+                .header("X-App-Version", BuildConfig.VERSION_NAME)
+                .header("Authorization", "******")
+                .post(requestBody)
+                .build()
+            http.newCall(request).execute().use { response ->
+                val responseText = response.body?.string().orEmpty()
+                if (response.code == 204 && responseText.isEmpty()) return@use JSONObject()
+                val envelope = try {
+                    JSONObject(responseText)
+                } catch (_: JSONException) {
+                    if (response.isSuccessful) {
+                        throw IOException("The school API returned an unreadable photo response.")
+                    }
+                    throw DjangoApiException(
+                        response.code,
+                        "http_${response.code}",
+                        "The school API photo upload failed (HTTP ${response.code})."
+                    )
+                }
+                if (!response.isSuccessful) {
+                    val error = envelope.optJSONObject("error")
+                    if (response.code == 401) expireSession()
+                    throw DjangoApiException(
+                        response.code,
+                        error?.optString("code").orEmpty().ifBlank { "http_${response.code}" },
+                        error?.optString("message").orEmpty().ifBlank {
+                            "The school API photo upload failed (HTTP ${response.code})."
+                        }
+                    )
+                }
+                envelope.optJSONObject("data") ?: JSONObject()
+            }
+        }
+
     suspend fun logout() = withContext(Dispatchers.IO) {
         try {
             execute(baseUrl + "/auth/logout/", "POST", JSONObject(), authenticated = true)
@@ -246,12 +466,59 @@ class DjangoApiClient(context: Context) {
 
     fun clearSession() {
         tokenStore.clear()
+        tokenStore.clearMetadata()
+        preferences.edit()
+            .remove(KEY_LAST_AUTHENTICATION)
+            .remove(KEY_LAST_SYNC)
+            .remove(KEY_ACCESS_RESTRICTION)
+            .apply()
         _sessionExpired.value = false
     }
 
     fun expireSession() {
         tokenStore.clear()
         _sessionExpired.value = true
+    }
+
+    private fun persistSchoolProfile(school: JSONObject) {
+        val name = school.optString("name").takeIf(String::isNotBlank)
+        val address = listOf(
+            "address",
+            "postal_address",
+            "location"
+        ).firstNotNullOfOrNull { key ->
+            school.optString(key).takeIf { it.isNotBlank() && it != "null" }
+        }
+        val phone = listOf("phone_number", "phone", "telephone").firstNotNullOfOrNull { key ->
+            school.optString(key).takeIf { it.isNotBlank() && it != "null" }
+        }
+        val email = listOf("email", "email_address").firstNotNullOfOrNull { key ->
+            school.optString(key).takeIf { it.isNotBlank() && it != "null" }
+        }
+        val logoValue = school.optString("logo_url")
+            .takeIf { it.isNotBlank() && it != "null" }
+            ?: school.optJSONObject("logo")?.optString("url")
+                ?.takeIf { it.isNotBlank() && it != "null" }
+            ?: school.optString("logo").takeIf {
+                it.isNotBlank() && it != "null" && !it.startsWith("{")
+            }
+        preferences.edit().apply {
+            name?.let { putString(KEY_SCHOOL_NAME, it) }
+            address?.let { putString(KEY_SCHOOL_ADDRESS, it) }
+            phone?.let { putString(KEY_SCHOOL_PHONE, it) }
+            email?.let { putString(KEY_SCHOOL_EMAIL, it) }
+            logoValue?.let { putString(KEY_SCHOOL_LOGO_URL, resolveSchoolAssetUrl(it)) }
+        }.apply()
+    }
+
+    private fun resolveSchoolAssetUrl(value: String): String {
+        if (value.startsWith("https://", ignoreCase = true) ||
+            value.startsWith("http://", ignoreCase = true)
+        ) {
+            return value
+        }
+        val origin = baseUrl.removeSuffix("/api/v1")
+        return "$origin/${value.trimStart('/')}"
     }
 
     private fun execute(
@@ -297,6 +564,18 @@ class DjangoApiClient(context: Context) {
                 if (response.code == 401 && authenticated) {
                     expireSession()
                 }
+                if (
+                    response.code == 403 &&
+                    authenticated &&
+                    url.substringBefore('?').endsWith("/auth/me/")
+                ) {
+                    preferences.edit()
+                        .putString(
+                            KEY_ACCESS_RESTRICTION,
+                            error?.optString("code").orEmpty().ifBlank { "access_restricted" }
+                        )
+                        .apply()
+                }
                 throw DjangoApiException(
                     response.code,
                     error?.optString("code").orEmpty().ifBlank { "http_${response.code}" },
@@ -330,6 +609,20 @@ class DjangoApiClient(context: Context) {
         private const val KEY_BASE_URL = "base_url"
         private const val KEY_TENANT_CONFIGURED = "tenant_configured"
         private const val KEY_SCHOOL_NAME = "school_name"
+        private const val KEY_SCHOOL_ADDRESS = "school_address"
+        private const val KEY_SCHOOL_PHONE = "school_phone"
+        private const val KEY_SCHOOL_EMAIL = "school_email"
+        private const val KEY_SCHOOL_LOGO_URL = "school_logo_url"
+        private const val KEY_LAST_AUTHENTICATION = "last_successful_authentication"
+        private const val KEY_LAST_SYNC = "last_successful_sync"
+        private const val KEY_OFFLINE_GRACE_DAYS = "offline_grace_days"
+        private const val KEY_ACCESS_RESTRICTION = "access_restriction"
+        private const val KEY_SESSION_TENANT = "tenant_url"
+        private const val KEY_CACHED_SESSION = "session"
+        private const val DEFAULT_OFFLINE_GRACE_DAYS = 30
+        private const val MAX_OFFLINE_GRACE_DAYS = 365
+        private const val MAX_STUDENT_PHOTO_BYTES = 10 * 1024 * 1024
+        private const val MILLIS_PER_DAY = 24 * 60 * 60 * 1000L
         private val SUPPORTED_ROLES = setOf(
             "ADMIN",
             "SENIOR_HOUSEMASTER",
@@ -373,6 +666,43 @@ private class EncryptedTokenStore(context: Context) {
         preferences.edit().remove(TOKEN_KEY).apply()
     }
 
+    fun readMetadata(): String? {
+        val encoded = preferences.getString(SESSION_METADATA_KEY, null) ?: return null
+        return try {
+            decrypt(encoded)
+        } catch (error: Exception) {
+            clearMetadata()
+            throw IllegalStateException(
+                "Stored offline session data could not be decrypted. Sign in again.",
+                error
+            )
+        }
+    }
+
+    fun writeMetadata(metadata: String) {
+        preferences.edit().putString(SESSION_METADATA_KEY, encrypt(metadata)).apply()
+    }
+
+    fun clearMetadata() {
+        preferences.edit().remove(SESSION_METADATA_KEY).apply()
+    }
+
+    private fun encrypt(value: String): String {
+        val cipher = Cipher.getInstance(TRANSFORMATION)
+        cipher.init(Cipher.ENCRYPT_MODE, key())
+        val encrypted = cipher.iv + cipher.doFinal(value.toByteArray(Charsets.UTF_8))
+        return Base64.encodeToString(encrypted, Base64.NO_WRAP)
+    }
+
+    private fun decrypt(encoded: String): String {
+        val raw = Base64.decode(encoded, Base64.NO_WRAP)
+        val iv = raw.copyOfRange(0, IV_LENGTH)
+        val ciphertext = raw.copyOfRange(IV_LENGTH, raw.size)
+        val cipher = Cipher.getInstance(TRANSFORMATION)
+        cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, iv))
+        return String(cipher.doFinal(ciphertext), Charsets.UTF_8)
+    }
+
     private fun key(): SecretKey {
         val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
         val existing = keyStore.getKey(KEY_ALIAS, null) as? SecretKey
@@ -393,6 +723,7 @@ private class EncryptedTokenStore(context: Context) {
 
     companion object {
         private const val TOKEN_KEY = "access_token"
+        private const val SESSION_METADATA_KEY = "encrypted_session_metadata"
         private const val KEY_ALIAS = "eden_django_api_token"
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
         private const val TRANSFORMATION = "AES/GCM/NoPadding"

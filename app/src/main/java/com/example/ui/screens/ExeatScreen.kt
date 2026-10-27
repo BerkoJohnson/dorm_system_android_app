@@ -54,6 +54,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.ui.viewmodel.ExeatWorkflow
 import com.example.data.model.ExeatRequest
@@ -67,6 +68,12 @@ import com.example.ui.viewmodel.MainViewModel
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.Calendar
+import android.app.DatePickerDialog
+import android.app.TimePickerDialog
+import android.text.format.DateFormat
+import java.time.Instant
+import java.time.format.DateTimeParseException
 
 @Composable
 fun ExeatScreen(
@@ -79,6 +86,7 @@ fun ExeatScreen(
     val exeats by viewModel.exeats.collectAsStateWithLifecycle()
     val students by viewModel.students.collectAsStateWithLifecycle()
     val houses by viewModel.houses.collectAsStateWithLifecycle()
+    val currentUserDisplayName by viewModel.currentUserDisplayName.collectAsStateWithLifecycle()
 
     var selectedFilter by remember { mutableStateOf("ALL") }
     var selectedExeatForDetail by remember { mutableStateOf<ExeatRequest?>(null) }
@@ -242,7 +250,7 @@ fun ExeatScreen(
                     onClick = {
                         viewModel.approveExeat(
                             ex.id,
-                            "Duty Housemaster",
+                            currentUserDisplayName,
                             approvalNotes.ifBlank { null }
                         )
                         exeatToApprove = null
@@ -296,7 +304,7 @@ fun ExeatScreen(
                         if (rejectReason.isNotBlank()) {
                             viewModel.rejectExeat(
                                 ex.id,
-                                "Duty Housemaster",
+                                currentUserDisplayName,
                                 rejectReason
                             )
                             exeatToReject = null
@@ -331,7 +339,7 @@ fun ExeatScreen(
                     destination = destination,
                     departureTime = now + (depHours * 3600 * 1000L),
                     expectedReturnTime = now + (retHours * 3600 * 1000L),
-                    actorName = "Duty Housemaster"
+                    actorName = currentUserDisplayName
                 )
                 showCreateDialog = false
             }
@@ -875,18 +883,15 @@ private fun ExeatOperationDialog(
                         modifier = Modifier.fillMaxWidth()
                     )
                     "reschedule" -> {
-                        Text("Enter ISO date-times in UTC, for example 2026-10-23T12:00:00Z.")
-                        OutlinedTextField(
+                        DateTimePickerField(
+                            label = "New departure *",
                             value = departure,
-                            onValueChange = onDepartureChange,
-                            label = { Text("New departure (UTC) *") },
-                            modifier = Modifier.fillMaxWidth()
+                            onValueChange = onDepartureChange
                         )
-                        OutlinedTextField(
+                        DateTimePickerField(
+                            label = "New return *",
                             value = expectedReturn,
-                            onValueChange = onExpectedReturnChange,
-                            label = { Text("New return (UTC) *") },
-                            modifier = Modifier.fillMaxWidth()
+                            onValueChange = onExpectedReturnChange
                         )
                         OutlinedTextField(
                             value = reason,
@@ -927,19 +932,16 @@ private fun ExeatOperationDialog(
                             modifier = Modifier.fillMaxWidth()
                         )
                         if (outcome != "unused") {
-                            Text("Enter confirmed or best-known actual times in UTC ISO format.")
-                            OutlinedTextField(
+                            DateTimePickerField(
+                                label = "Actual departure",
                                 value = departure,
-                                onValueChange = onDepartureChange,
-                                label = { Text("Actual departure") },
-                                modifier = Modifier.fillMaxWidth()
+                                onValueChange = onDepartureChange
                             )
                             if (outcome == "returned") {
-                                OutlinedTextField(
+                                DateTimePickerField(
+                                    label = "Actual return",
                                     value = expectedReturn,
-                                    onValueChange = onExpectedReturnChange,
-                                    label = { Text("Actual return") },
-                                    modifier = Modifier.fillMaxWidth()
+                                    onValueChange = onExpectedReturnChange
                                 )
                             }
                         }
@@ -967,6 +969,7 @@ private fun ExeatOperationDialog(
                                         }
                                     )
                                 }
+
                             }
                         }
                         OutlinedTextField(

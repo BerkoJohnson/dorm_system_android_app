@@ -16,7 +16,12 @@ interface ExeatDao {
     @Query("SELECT * FROM exeat_requests WHERE houseId = :houseId ORDER BY createdAt DESC")
     fun getExeatsByHouse(houseId: String): Flow<List<ExeatRequest>>
 
-    @Query("SELECT * FROM exeat_requests WHERE studentId = :studentId AND status IN ('PENDING', 'APPROVED', 'DEPARTED') ORDER BY createdAt DESC LIMIT 1")
+    @Query(
+        "SELECT * FROM exeat_requests WHERE studentId = :studentId " +
+            "AND status IN ('PENDING', 'APPROVED', 'DEPARTED') " +
+            "ORDER BY CASE status WHEN 'DEPARTED' THEN 0 WHEN 'APPROVED' THEN 1 ELSE 2 END, " +
+            "createdAt DESC LIMIT 1"
+    )
     suspend fun getActiveExeatForStudent(studentId: String): ExeatRequest?
 
     @Query("SELECT * FROM exeat_requests WHERE id = :id LIMIT 1")

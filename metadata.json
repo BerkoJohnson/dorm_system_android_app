@@ -1,6 +1,6 @@
 {
-  "name": "Eden SHS Boarding",
-  "description": "Senior High School Boarding & Dormitory Management System powered by Eden Creative Systems.",
+  "name": "Edenest",
+  "description": "School boarding and dormitory management by Eden Creative Systems.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

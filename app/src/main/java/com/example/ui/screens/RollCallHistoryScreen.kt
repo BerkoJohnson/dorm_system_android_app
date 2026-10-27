@@ -24,6 +24,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -53,6 +54,7 @@ fun RollCallHistoryScreen(
 ) {
     val sessions by viewModel.rollCallSessions.collectAsStateWithLifecycle()
     val selectedSession by viewModel.selectedRollCallSession.collectAsStateWithLifecycle()
+    val houses by viewModel.houses.collectAsStateWithLifecycle()
     val message by viewModel.rollCallHistoryMessage.collectAsStateWithLifecycle()
     val isLoading by viewModel.isLoadingRollCallHistory.collectAsStateWithLifecycle()
     val hasMore by viewModel.hasMoreRollCallHistory.collectAsStateWithLifecycle()
@@ -175,6 +177,7 @@ fun RollCallHistoryScreen(
     if (selectedSession != null) {
         RollCallSessionDetailDialog(
             session = selectedSession!!,
+            houses = houses,
             viewModel = viewModel,
             onDismiss = viewModel::closeRollCallSession
         )
@@ -184,6 +187,7 @@ fun RollCallHistoryScreen(
 @Composable
 private fun RollCallSessionDetailDialog(
     session: RollCallSessionItem,
+    houses: List<com.example.data.model.House>,
     viewModel: MainViewModel,
     onDismiss: () -> Unit
 ) {
@@ -212,6 +216,8 @@ private fun RollCallSessionDetailDialog(
                 entries.forEach { entry ->
                     RollCallHistoryEntry(
                         entry = entry,
+                        houseName = houses.firstOrNull { it.id == entry.houseId }?.name
+                            ?: entry.houseName.ifBlank { "House not recorded" },
                         editable = editable,
                         onStatusSelected = { status ->
                             viewModel.updateRollCallEntry(
@@ -220,12 +226,20 @@ private fun RollCallSessionDetailDialog(
                                 status = status,
                                 remarks = entry.remarks
                             )
+                        },
+                        onCorrectionRequested = { status, reason ->
+                            viewModel.requestRollCallCorrection(
+                                session = session,
+                                entry = entry,
+                                requestedStatus = status,
+                                reason = reason
+                            )
                         }
                     )
                 }
                 if (!editable) {
                     Text(
-                        text = "This session is finalized. Attendance corrections are disabled by the server.",
+                        text = "This session is finalized. Changes are submitted as correction requests and do not alter the original record.",
                         color = Color(0xFF64748B),
                         fontSize = 11.sp
                     )
@@ -243,10 +257,15 @@ private fun RollCallSessionDetailDialog(
 @Composable
 private fun RollCallHistoryEntry(
     entry: RollCallEntryItem,
+    houseName: String,
     editable: Boolean,
-    onStatusSelected: (String) -> Unit
+    onStatusSelected: (String) -> Unit,
+    onCorrectionRequested: (String, String) -> Unit
 ) {
-    var menuExpanded by remember(entry.id) { mutableStateOf(false) }
+    var statusMenuExpanded by remember(entry.id) { mutableStateOf(false) }
+    var correctionMenuExpanded by remember(entry.id) { mutableStateOf(false) }
+    var requestedStatus by remember(entry.id) { mutableStateOf(entry.status) }
+    var correctionReason by remember(entry.id) { mutableStateOf("") }
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(8.dp),
@@ -267,13 +286,44 @@ private fun RollCallHistoryEntry(
                 fontSize = 10.sp,
                 color = Color(0xFF64748B)
             )
+            Text(
+                text = houseName,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                color = Color(0xFF475569)
+            )
             BoxStatusSelector(
                 status = entry.status,
                 enabled = editable,
-                expanded = menuExpanded,
-                onExpandedChange = { menuExpanded = it },
+                expanded = statusMenuExpanded,
+                onExpandedChange = { statusMenuExpanded = it },
                 onStatusSelected = onStatusSelected
             )
+            if (!editable) {
+                BoxStatusSelector(
+                    status = requestedStatus,
+                    enabled = true,
+                    expanded = correctionMenuExpanded,
+                    onExpandedChange = { correctionMenuExpanded = it },
+                    onStatusSelected = { requestedStatus = it },
+                    actionLabel = "Request"
+                )
+                OutlinedTextField(
+                    value = correctionReason,
+                    onValueChange = { correctionReason = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Correction reason (required)") },
+                    singleLine = true
+                )
+                Button(
+                    onClick = {
+                        onCorrectionRequested(requestedStatus, correctionReason)
+                    },
+                    enabled = correctionReason.isNotBlank()
+                ) {
+                    Text("Submit correction request")
+                }
+            }
             if (!entry.gateConflict.isNullOrBlank()) {
                 Text(
                     text = "Gate conflict: ${entry.gateConflict}",
@@ -298,17 +348,20 @@ private fun BoxStatusSelector(
     enabled: Boolean,
     expanded: Boolean,
     onExpandedChange: (Boolean) -> Unit,
-    onStatusSelected: (String) -> Unit
+    onStatusSelected: (String) -> Unit,
+    actionLabel: String = "Correct"
 ) {
     androidx.compose.foundation.layout.Box {
+        val (statusBackground, statusForeground) = rollCallStatusColors(status)
         Surface(
             modifier = Modifier.clickable(enabled = enabled) { onExpandedChange(true) },
             shape = RoundedCornerShape(6.dp),
-            color = if (enabled) Color(0xFFE0E7FF) else Color(0xFFE2E8F0)
+            color = statusBackground
         ) {
             Text(
-                text = if (enabled) "$status  ·  Correct" else status,
-                color = NavyPrimary,
+                text = if (enabled) "$status  ·  $actionLabel" else status,
+                color = statusForeground,
+                fontWeight = FontWeight.SemiBold,
                 fontSize = 10.sp,
                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
             )
@@ -330,3 +383,13 @@ private fun BoxStatusSelector(
         }
     }
 }
+
+private fun rollCallStatusColors(status: String): Pair<Color, Color> =
+        when (status.trim().uppercase().replace(' ', '_')) {
+                "PRESENT" -> Color(0xFFDCFCE7) to Color(0xFF166534)
+                "ABSENT" -> Color(0xFFFEE2E2) to Color(0xFFB91C1C)
+                "ON_EXEAT" -> Color(0xFFFEF3C7) to Color(0xFF92400E)
+                "INFIRMARY" -> Color(0xFFEDE9FE) to Color(0xFF5B21B6)
+                "ACTIVITY" -> Color(0xFFDBEAFE) to Color(0xFF1E40AF)
+                else -> Color(0xFFE2E8F0) to Color(0xFF334155)
+        }

@@ -7,10 +7,13 @@ import com.example.data.model.AuditLog
 import com.example.data.model.ExeatRequest
 import com.example.data.model.GateMovement
 import com.example.data.model.House
+import com.example.data.model.RemoteMutationOutboxItem
 import com.example.data.model.RoomEntity
 import com.example.data.model.Student
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import java.util.UUID
+import org.json.JSONObject
 
 sealed class GateVerificationResult {
     data class ClearedForDeparture(
@@ -40,13 +43,22 @@ sealed class GateVerificationResult {
 }
 
 class BoardingRepository(private val db: AppDatabase) {
+    private var auditOwnerId: String = ""
+    private var auditTenantUrl: String = ""
 
     val allHouses: Flow<List<House>> = db.houseDao().getAllHouses()
     val allRooms: Flow<List<RoomEntity>> = db.roomDao().getAllRooms()
     val allStudents: Flow<List<Student>> = db.studentDao().getAllStudents()
     val allExeats: Flow<List<ExeatRequest>> = db.exeatDao().getAllExeats()
     val allMovements: Flow<List<GateMovement>> = db.gateMovementDao().getAllMovements()
-    val allAuditLogs: Flow<List<AuditLog>> = db.auditDao().getAllAuditLogs()
+
+    fun setAuditScope(ownerId: String, tenantUrl: String) {
+        auditOwnerId = ownerId.takeIf(String::isNotBlank).orEmpty()
+        auditTenantUrl = tenantUrl.takeIf(String::isNotBlank).orEmpty()
+    }
+
+    fun auditLogs(ownerId: String, tenantUrl: String): Flow<List<AuditLog>> =
+        db.auditDao().getAuditLogs(ownerId, tenantUrl)
 
     suspend fun clearSessionData() {
         db.withTransaction {
@@ -56,12 +68,31 @@ class BoardingRepository(private val db: AppDatabase) {
             db.exeatDao().clear()
             db.attendanceDao().clear()
             db.gateMovementDao().clear()
-            db.auditDao().clear()
         }
     }
 
+    suspend fun hasUsableSchoolCache(): Boolean =
+        db.houseDao().countHouses() > 0 && db.studentDao().countStudents() > 0
+
+    suspend fun hasCachedSchoolData(): Boolean =
+        db.houseDao().countHouses() > 0 ||
+            db.roomDao().countRooms() > 0 ||
+            db.studentDao().countStudents() > 0
+
+    suspend fun saveStudent(student: Student) {
+        db.studentDao().insertStudent(student)
+    }
+
+    suspend fun studentIndexExists(indexNumber: String, excludingId: String? = null): Boolean =
+        db.studentDao().getStudentByIndexNumber(indexNumber)
+            ?.let { it.id != excludingId } == true
+
     val rollCallOutboxDao get() = db.rollCallOutboxDao()
     val remoteMutationOutboxDao get() = db.remoteMutationOutboxDao()
+
+    suspend fun updateGateMovementSyncState(id: String, status: String, error: String? = null) {
+        db.gateMovementDao().updateSyncState(id, status, error)
+    }
 
     fun getRoomsByHouse(houseId: String): Flow<List<RoomEntity>> =
         db.roomDao().getRoomsByHouse(houseId)
@@ -89,26 +120,20 @@ class BoardingRepository(private val db: AppDatabase) {
         val student = getStudentByQrOrIndex(query) ?: return GateVerificationResult.StudentNotFound(query)
         val activeExeat = db.exeatDao().getActiveExeatForStudent(student.id)
 
-        // If currently IN_DORM, check if cleared to leave
-        if (student.status == "IN_DORM") {
-            if (activeExeat != null && activeExeat.status == "APPROVED") {
-                return GateVerificationResult.ClearedForDeparture(
-                    student = student,
-                    exeat = activeExeat,
-                    validUntilMs = activeExeat.expectedReturnTime
-                )
-            } else {
-                return GateVerificationResult.BlockedNoExeat(
-                    student = student,
-                    reason = "No approved exeat pass found. Gate exit prohibited."
-                )
-            }
+        if (
+            activeExeat?.status == "APPROVED" &&
+            student.status in setOf("IN_DORM", "ON_EXEAT")
+        ) {
+            return GateVerificationResult.ClearedForDeparture(
+                student = student,
+                exeat = activeExeat,
+                validUntilMs = activeExeat.expectedReturnTime
+            )
         }
 
-        // If currently ON_EXEAT, returning to campus
-        if (student.status == "ON_EXEAT") {
+        if (student.status == "ON_EXEAT" && activeExeat?.status == "DEPARTED") {
             val now = System.currentTimeMillis()
-            val isOverdue = activeExeat != null && now > activeExeat.expectedReturnTime
+            val isOverdue = now > activeExeat.expectedReturnTime
             return GateVerificationResult.ClearedForReturn(
                 student = student,
                 exeat = activeExeat,
@@ -125,69 +150,104 @@ class BoardingRepository(private val db: AppDatabase) {
 
     suspend fun recordGateMovement(
         student: Student,
-        exeatId: String?,
+        exeatId: String,
         movementType: String, // "DEPARTURE" or "ARRIVAL"
         officerName: String,
         gateName: String,
-        remarks: String
-    ) {
-        val movementId = "MOV_" + System.currentTimeMillis().toString().takeLast(6)
+        remarks: String,
+        ownerId: String,
+        tenantUrl: String
+    ): GateMovement = db.withTransaction {
+        require(movementType == "DEPARTURE" || movementType == "ARRIVAL") {
+            "Unsupported gate movement."
+        }
+        require(ownerId.isNotBlank() && tenantUrl.isNotBlank()) {
+            "A signed-in account and school are required to record gate movements."
+        }
+        val currentStudent = db.studentDao().getStudentByIdDirect(student.id)
+            ?: throw IllegalStateException("The student is no longer in the synced roster.")
+        val exeat = db.exeatDao().getExeatByIdDirect(exeatId)
+            ?: throw IllegalStateException("The approved exeat is no longer in the synced records.")
+        require(exeat.studentId == currentStudent.id) {
+            "The exeat does not belong to this student."
+        }
+        when (movementType) {
+            "DEPARTURE" -> require(
+                currentStudent.status in setOf("IN_DORM", "ON_EXEAT") &&
+                    exeat.status == "APPROVED"
+            ) {
+                "The student is not currently cleared to depart. Verify the latest synced pass."
+            }
+            "ARRIVAL" -> require(
+                currentStudent.status == "ON_EXEAT" && exeat.status == "DEPARTED"
+            ) {
+                "The student does not have an active departure to return from."
+            }
+        }
+
+        val timestamp = System.currentTimeMillis()
+        val movementId = UUID.randomUUID().toString()
         val movement = GateMovement(
             id = movementId,
-            studentId = student.id,
-            studentName = student.fullName,
-            studentIndexNumber = student.studentId,
-            houseName = student.houseId,
+            studentId = currentStudent.id,
+            studentName = currentStudent.fullName,
+            studentIndexNumber = currentStudent.studentId,
+            houseName = currentStudent.houseId,
             exeatId = exeatId,
             movementType = movementType,
-            timestamp = System.currentTimeMillis(),
+            timestamp = timestamp,
             officerName = officerName,
             gateName = gateName,
             isAuthorized = true,
-            remarks = remarks
+            remarks = remarks,
+            syncStatus = "PENDING_SYNC"
         )
-        db.gateMovementDao().insertMovement(movement)
-
-        // Update student status & exeat state
-        if (movementType == "DEPARTURE") {
-            db.studentDao().updateStudentStatus(student.id, "ON_EXEAT")
-            if (exeatId != null) {
-                val exeat = db.exeatDao().getExeatByIdDirect(exeatId)
-                if (exeat != null) {
-                    db.exeatDao().updateExeat(
-                        exeat.copy(
-                            status = "DEPARTED",
-                            actualDepartureTime = System.currentTimeMillis()
-                        )
-                    )
-                }
-            }
-            logAudit(
-                action = "GATE_DEPARTURE_LOGGED",
-                actorRole = "Gate Officer",
-                actorName = officerName,
-                details = "Student ${student.fullName} (${student.studentId}) departed via $gateName."
-            )
-        } else if (movementType == "ARRIVAL") {
-            db.studentDao().updateStudentStatus(student.id, "IN_DORM")
-            if (exeatId != null) {
-                val exeat = db.exeatDao().getExeatByIdDirect(exeatId)
-                if (exeat != null) {
-                    db.exeatDao().updateExeat(
-                        exeat.copy(
-                            status = "RETURNED",
-                            actualReturnTime = System.currentTimeMillis()
-                        )
-                    )
-                }
-            }
-            logAudit(
-                action = "GATE_RETURN_LOGGED",
-                actorRole = "Gate Officer",
-                actorName = officerName,
-                details = "Student ${student.fullName} (${student.studentId}) returned through $gateName."
-            )
+        check(db.gateMovementDao().insertMovement(movement) != -1L) {
+            "This gate movement was already recorded."
         }
+
+        val route = if (movementType == "DEPARTURE") "gate/depart/" else "gate/return/"
+        val outboxId = db.remoteMutationOutboxDao().insert(
+            RemoteMutationOutboxItem(
+                id = movementId,
+                ownerId = ownerId,
+                tenantUrl = tenantUrl,
+                path = route,
+                payloadJson = JSONObject().put("exeat_id", exeatId).toString(),
+                attempts = 0,
+                lastError = null,
+                createdAt = timestamp
+            )
+        )
+        check(outboxId != -1L) { "This gate movement is already queued for synchronization." }
+
+        when (movementType) {
+            "DEPARTURE" -> {
+                db.studentDao().updateStudentStatus(currentStudent.id, "ON_EXEAT")
+                db.exeatDao().updateExeat(
+                    exeat.copy(status = "DEPARTED", actualDepartureTime = timestamp)
+                )
+                logAudit(
+                    action = "GATE_DEPARTURE_LOGGED",
+                    actorRole = "Gate Officer",
+                    actorName = officerName,
+                    details = "Student ${currentStudent.fullName} (${currentStudent.studentId}) departed via $gateName."
+                )
+            }
+            "ARRIVAL" -> {
+                db.studentDao().updateStudentStatus(currentStudent.id, "IN_DORM")
+                db.exeatDao().updateExeat(
+                    exeat.copy(status = "RETURNED", actualReturnTime = timestamp)
+                )
+                logAudit(
+                    action = "GATE_RETURN_LOGGED",
+                    actorRole = "Gate Officer",
+                    actorName = officerName,
+                    details = "Student ${currentStudent.fullName} (${currentStudent.studentId}) returned through $gateName."
+                )
+            }
+        }
+        movement
     }
 
     suspend fun approveExeat(
@@ -316,7 +376,9 @@ class BoardingRepository(private val db: AppDatabase) {
                 actorRole = actorRole,
                 actorName = actorName,
                 details = details,
-                timestamp = System.currentTimeMillis()
+                timestamp = System.currentTimeMillis(),
+                ownerId = auditOwnerId,
+                tenantUrl = auditTenantUrl
             )
         )
     }

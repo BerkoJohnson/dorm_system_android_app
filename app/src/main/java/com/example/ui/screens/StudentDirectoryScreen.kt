@@ -1,5 +1,7 @@
 package com.example.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -10,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -23,8 +26,12 @@ import androidx.compose.material.icons.filled.Badge
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.BasicAlertDialog
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -38,6 +45,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
@@ -45,26 +53,57 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.model.Student
 import com.example.ui.components.StudentIdCard
+import com.example.ui.components.printStudentReference
+import com.example.data.remote.DjangoApiClient
 import com.example.ui.theme.EmeraldGreen
 import com.example.ui.theme.GoldAccent
 import com.example.ui.theme.NavyPrimary
 import com.example.ui.viewmodel.MainViewModel
+import com.example.ui.viewmodel.StudentRecordInput
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StudentDirectoryScreen(
     viewModel: MainViewModel,
+    apiClient: DjangoApiClient,
+    canManageStudents: Boolean,
     modifier: Modifier = Modifier
 ) {
-    val students by viewModel.students.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val allStudents by viewModel.students.collectAsStateWithLifecycle()
+    val students = viewModel.houseScopedStudents(allStudents)
     val houses by viewModel.houses.collectAsStateWithLifecycle()
+    val currentRole by viewModel.currentRole.collectAsStateWithLifecycle()
+    val permissions by viewModel.apiPermissions.collectAsStateWithLifecycle()
+    val studentRecordMessage by viewModel.studentRecordMessage.collectAsStateWithLifecycle()
+    val visibleHouses = houses.filter { house ->
+        !currentRole.isHouseScoped || house.id == permissions.houseId
+    }
 
     var searchQuery by remember { mutableStateOf("") }
     var selectedHouseFilter by remember { mutableStateOf<String?>("ALL") }
     var viewingStudentIdCard by remember { mutableStateOf<Student?>(null) }
+    var editingStudent by remember { mutableStateOf<Student?>(null) }
+    var showCreateEditor by remember { mutableStateOf(false) }
+    var photoTarget by remember { mutableStateOf<Student?>(null) }
+    val photoPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri ->
+        val student = photoTarget
+        if (uri != null && student != null) {
+            viewModel.uploadStudentPhoto(student, uri) { updated ->
+                viewingStudentIdCard = updated
+                photoTarget = null
+            }
+        } else {
+            photoTarget = null
+        }
+    }
 
     val filtered = students.filter { s ->
         val matchesHouse = selectedHouseFilter == "ALL" || s.houseId == selectedHouseFilter
@@ -80,6 +119,23 @@ fun StudentDirectoryScreen(
             .fillMaxSize()
             .padding(16.dp)
     ) {
+        if (canManageStudents) {
+            Button(
+                onClick = {
+                    viewModel.clearStudentRecordMessage()
+                    showCreateEditor = true
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Add student")
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+        studentRecordMessage?.let { message ->
+            Text(message, color = NavyPrimary, fontSize = 12.sp)
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+
         // Search TextField
         OutlinedTextField(
             value = searchQuery,
@@ -98,24 +154,26 @@ fun StudentDirectoryScreen(
 
         // House Filter Chips
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            item {
-                val isSelected = selectedHouseFilter == "ALL"
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = if (isSelected) NavyPrimary else Color(0xFFF1F5F9),
-                    modifier = Modifier.clickable { selectedHouseFilter = "ALL" }
-                ) {
-                    Text(
-                        text = "All Houses (${students.size})",
-                        color = if (isSelected) Color.White else Color(0xFF475569),
-                        fontSize = 12.sp,
-                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp)
-                    )
+            if (!currentRole.isHouseScoped) {
+                item {
+                    val isSelected = selectedHouseFilter == "ALL"
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = if (isSelected) NavyPrimary else Color(0xFFF1F5F9),
+                        modifier = Modifier.clickable { selectedHouseFilter = "ALL" }
+                    ) {
+                        Text(
+                            text = "All Houses (${students.size})",
+                            color = if (isSelected) Color.White else Color(0xFF475569),
+                            fontSize = 12.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp)
+                        )
+                    }
                 }
             }
 
-            items(houses) { house ->
+            items(visibleHouses) { house ->
                 val isSelected = selectedHouseFilter == house.id
                 Surface(
                     shape = RoundedCornerShape(16.dp),
@@ -188,7 +246,10 @@ fun StudentDirectoryScreen(
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 680.dp)
+                    .verticalScroll(rememberScrollState()),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Box(
@@ -206,11 +267,218 @@ fun StudentDirectoryScreen(
                 }
                 StudentIdCard(
                     student = s,
-                    house = house
+                    house = house,
+                    schoolName = apiClient.configuredSchoolName,
+                    schoolAddress = apiClient.configuredSchoolAddress,
+                    schoolPhone = apiClient.configuredSchoolPhone,
+                    schoolEmail = apiClient.configuredSchoolEmail,
+                    schoolLogoUrl = apiClient.configuredSchoolLogoUrl
                 )
+                Button(
+                    onClick = {
+                        printStudentReference(
+                            context = context,
+                            student = s,
+                            house = house,
+                            schoolName = apiClient.configuredSchoolName
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Print / save student reference")
+                }
+                Text(
+                    text = "Programme: ${s.program.ifBlank { "Unknown" }}",
+                    modifier = Modifier.fillMaxWidth(),
+                    color = Color(0xFF334155),
+                    fontSize = 12.sp
+                )
+                Text(
+                    text = "House: ${house?.name ?: "Unknown"} · Bed: ${
+                        s.bedNumber.takeIf { it > 0 }?.toString() ?: "Unknown"
+                    }${s.assignedRoomName.takeIf(String::isNotBlank)?.let { " · $it" }.orEmpty()}",
+                    modifier = Modifier.fillMaxWidth(),
+                    color = Color(0xFF334155),
+                    fontSize = 12.sp
+                )
+                Text(
+                    text = "Guardian: ${s.guardianName.ifBlank { "Unknown" }} · " +
+                        "${s.guardianRelationship.ifBlank { "Relationship unknown" }} · " +
+                        s.guardianPhone.ifBlank { "Phone unknown" },
+                    modifier = Modifier.fillMaxWidth(),
+                    color = Color(0xFF334155),
+                    fontSize = 12.sp
+                )
+                Text(
+                    text = "Medical / emergency alert: ${
+                        s.emergencyNotes.ifBlank { "Unknown" }
+                    }",
+                    modifier = Modifier.fillMaxWidth(),
+                    color = if (s.emergencyNotes.isBlank() || s.emergencyNotes == "Unknown") {
+                        Color(0xFF64748B)
+                    } else {
+                        Color(0xFFB91C1C)
+                    },
+                    fontSize = 12.sp
+                )
+                if (canManageStudents) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = {
+                                viewModel.clearStudentRecordMessage()
+                                editingStudent = s
+                            }
+                        ) { Text("Edit student") }
+                        Button(
+                            onClick = {
+                                photoTarget = s
+                                photoPicker.launch("image/*")
+                            }
+                        ) { Text("Upload photo") }
+                    }
+                }
             }
         }
     }
+
+    if (showCreateEditor || editingStudent != null) {
+        val initialStudent = editingStudent
+        StudentRecordEditor(
+            student = initialStudent,
+            houses = visibleHouses,
+            message = studentRecordMessage,
+            onDismiss = {
+                showCreateEditor = false
+                editingStudent = null
+            },
+            onSave = { input ->
+                viewModel.saveStudentRecord(initialStudent, input) { saved ->
+                    showCreateEditor = false
+                    editingStudent = null
+                    viewingStudentIdCard = saved
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun StudentRecordEditor(
+    student: Student?,
+    houses: List<com.example.data.model.House>,
+    message: String?,
+    onDismiss: () -> Unit,
+    onSave: (StudentRecordInput) -> Unit
+) {
+    var studentId by remember(student?.id) { mutableStateOf(student?.studentId.orEmpty()) }
+    var fullName by remember(student?.id) { mutableStateOf(student?.fullName.orEmpty()) }
+    var gender by remember(student?.id) { mutableStateOf(student?.gender.orEmpty()) }
+    var form by remember(student?.id) { mutableStateOf(student?.classForm.orEmpty()) }
+    var program by remember(student?.id) { mutableStateOf(student?.program.orEmpty()) }
+    var houseId by remember(student?.id) { mutableStateOf(student?.houseId.orEmpty()) }
+    var guardianName by remember(student?.id) { mutableStateOf(student?.guardianName.orEmpty()) }
+    var guardianPhone by remember(student?.id) { mutableStateOf(student?.guardianPhone.orEmpty()) }
+    var guardianRelationship by remember(student?.id) {
+        mutableStateOf(student?.guardianRelationship.orEmpty())
+    }
+    var emergencyNotes by remember(student?.id) {
+        mutableStateOf(student?.emergencyNotes?.takeUnless { it == "Unknown" }.orEmpty())
+    }
+    var houseMenuExpanded by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (student == null) "Add student" else "Edit student") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                if (!message.isNullOrBlank()) {
+                    Text(message, color = Color(0xFFB91C1C), fontSize = 12.sp)
+                }
+                OutlinedTextField(
+                    studentId,
+                    { studentId = it },
+                    label = { Text("Index/admission number") }
+                )
+                OutlinedTextField(fullName, { fullName = it }, label = { Text("Full name") })
+                OutlinedTextField(gender, { gender = it }, label = { Text("Gender") })
+                OutlinedTextField(form, { form = it }, label = { Text("Form / class") })
+                OutlinedTextField(program, { program = it }, label = { Text("Programme") })
+                Box {
+                    OutlinedTextField(
+                        value = houses.firstOrNull { it.id == houseId }?.name.orEmpty(),
+                        onValueChange = {},
+                        label = { Text("House") },
+                        readOnly = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { houseMenuExpanded = true }
+                    )
+                    DropdownMenu(
+                        expanded = houseMenuExpanded,
+                        onDismissRequest = { houseMenuExpanded = false }
+                    ) {
+                        houses.forEach { house ->
+                            DropdownMenuItem(
+                                text = { Text(house.name) },
+                                onClick = {
+                                    houseId = house.id
+                                    houseMenuExpanded = false
+                                }
+                            )
+                        }
+                    }
+                }
+                OutlinedTextField(
+                    guardianName,
+                    { guardianName = it },
+                    label = { Text("Guardian name") }
+                )
+                OutlinedTextField(
+                    guardianPhone,
+                    { guardianPhone = it },
+                    label = { Text("Guardian phone") }
+                )
+                OutlinedTextField(
+                    guardianRelationship,
+                    { guardianRelationship = it },
+                    label = { Text("Guardian relationship") }
+                )
+                OutlinedTextField(
+                    emergencyNotes,
+                    { emergencyNotes = it },
+                    label = { Text("Medical / emergency notes") }
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onSave(
+                        StudentRecordInput(
+                            studentId = studentId,
+                            fullName = fullName,
+                            gender = gender,
+                            classForm = form,
+                            program = program,
+                            houseId = houseId,
+                            guardianName = guardianName,
+                            guardianPhone = guardianPhone,
+                            guardianRelationship = guardianRelationship,
+                            emergencyNotes = emergencyNotes
+                        )
+                    )
+                }
+            ) { Text("Save") }
+        },
+        dismissButton = {
+            Button(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
 }
 
 @Composable
@@ -275,12 +543,23 @@ private fun StudentRowItem(
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        text = listOf(student.classForm, houseName)
+                        text = listOf(
+                            student.classForm.ifBlank { "Form unknown" },
+                            student.program.ifBlank { "Programme unknown" },
+                            houseName
+                        )
                             .filter(String::isNotBlank)
                             .joinToString(" · "),
                         fontSize = 12.sp,
                         color = Color(0xFF475569),
                         maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = student.guardianPhone.ifBlank { "Guardian phone unknown" },
+                        fontSize = 11.sp,
+                        color = Color(0xFF475569),
+                        maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 }

@@ -53,10 +53,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.layout.ContentScale
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import coil.compose.AsyncImage
 import com.example.data.model.Student
 import com.example.data.repository.GateVerificationResult
 import com.example.ui.theme.AmberWarning
@@ -78,6 +80,7 @@ fun GateCheckScreen(
     val scanResult by viewModel.gateScanResult.collectAsStateWithLifecycle()
     val scanMessage by viewModel.scanMessage.collectAsStateWithLifecycle()
     val students by viewModel.students.collectAsStateWithLifecycle()
+    val movements by viewModel.movements.collectAsStateWithLifecycle()
 
     var queryInput by remember { mutableStateOf("") }
     val context = LocalContext.current
@@ -336,11 +339,24 @@ fun GateCheckScreen(
             modifier = Modifier.fillMaxWidth()
         ) {
             Text(
-                text = "Gate movement history is not exposed by the mobile API. Departure and return actions are sent to the school server.",
+                text = "Passes are verified from the locally synced student roster and approved exeats. New movements appear immediately and sync when a connection is available.",
                 color = Color(0xFF475569),
                 fontSize = 12.sp,
                 modifier = Modifier.padding(12.dp)
             )
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        if (movements.isEmpty()) {
+            Text(
+                text = "No gate movements recorded on this device yet.",
+                color = Color.Gray,
+                fontSize = 12.sp
+            )
+        } else {
+            movements.take(20).forEach { movement ->
+                GateMovementRow(movement = movement)
+                Spacer(modifier = Modifier.height(6.dp))
+            }
         }
     }
 }
@@ -401,6 +417,23 @@ private fun VerificationResultCard(
             }
 
             Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = "Verified using the synced local roster and pass records; an internet connection is not required.",
+                fontSize = 11.sp,
+                color = Color(0xFF475569)
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+
+            val student = when (result) {
+                is GateVerificationResult.ClearedForDeparture -> result.student
+                is GateVerificationResult.ClearedForReturn -> result.student
+                is GateVerificationResult.BlockedNoExeat -> result.student
+                else -> null
+            }
+            if (student != null) {
+                GateStudentPhoto(student)
+                Spacer(modifier = Modifier.height(8.dp))
+            }
 
             when (result) {
                 is GateVerificationResult.ClearedForDeparture -> {
@@ -409,6 +442,12 @@ private fun VerificationResultCard(
                         fontWeight = FontWeight.Bold,
                         fontSize = 15.sp,
                         color = NavyPrimary
+                    )
+                    Text(
+                        text = "Guardian: ${result.student.guardianName.ifBlank { "Unknown" }} · " +
+                            result.student.guardianPhone.ifBlank { "Phone unknown" },
+                        fontSize = 11.sp,
+                        color = Color(0xFF475569)
                     )
                     Text(
                         text = "Approved Pass: ${result.exeat.category} to ${result.exeat.destination}",
@@ -454,6 +493,12 @@ private fun VerificationResultCard(
                         fontWeight = FontWeight.Bold,
                         fontSize = 15.sp,
                         color = NavyPrimary
+                    )
+                    Text(
+                        text = "Guardian: ${result.student.guardianName.ifBlank { "Unknown" }} · " +
+                            result.student.guardianPhone.ifBlank { "Phone unknown" },
+                        fontSize = 11.sp,
+                        color = Color(0xFF475569)
                     )
                     if (result.isOverdue) {
                         Text(
@@ -524,6 +569,36 @@ private fun VerificationResultCard(
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun GateStudentPhoto(student: Student) {
+    Box(
+        modifier = Modifier
+            .size(width = 96.dp, height = 112.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(NavyPrimary),
+        contentAlignment = Alignment.Center
+    ) {
+        if (student.photoUrl.isNotBlank()) {
+            AsyncImage(
+                model = student.photoUrl,
+                contentDescription = "${student.fullName} photo",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
+            )
+        } else {
+            Text(
+                text = student.fullName.split(" ")
+                    .mapNotNull { it.firstOrNull()?.toString() }
+                    .take(2)
+                    .joinToString(""),
+                color = Color.White,
+                fontSize = 24.sp,
+                fontWeight = FontWeight.Bold
+            )
         }
     }
 }

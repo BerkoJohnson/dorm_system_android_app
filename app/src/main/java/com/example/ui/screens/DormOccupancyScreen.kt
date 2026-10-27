@@ -19,6 +19,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bed
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.MeetingRoom
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
@@ -26,6 +28,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedTextField
@@ -35,6 +39,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -68,6 +73,22 @@ fun DormOccupancyScreen(
     val students by viewModel.students.collectAsStateWithLifecycle()
     val bedSpaces by viewModel.bedSpaces.collectAsStateWithLifecycle()
     var selectedStudent by remember { mutableStateOf<Student?>(null) }
+    var selectedHouseFilter by remember { mutableStateOf("ALL") }
+    var selectedDormitoryFilter by remember { mutableStateOf("ALL") }
+    var selectedClassFilter by remember { mutableStateOf("ALL") }
+    val expandedHouses = remember { mutableStateMapOf<String, Boolean>() }
+    val availableRooms = rooms.filter {
+        selectedHouseFilter == "ALL" || it.houseId == selectedHouseFilter
+    }
+    val classForms = students.map { it.classForm }
+        .filter(String::isNotBlank)
+        .distinct()
+        .sorted()
+    val visibleHouses = houses.filter { house ->
+        (selectedHouseFilter == "ALL" || house.id == selectedHouseFilter) &&
+            (selectedDormitoryFilter == "ALL" ||
+                availableRooms.any { it.houseId == house.id && it.id == selectedDormitoryFilter })
+    }
 
     LaunchedEffect(canManageAllocations) {
         if (canManageAllocations) viewModel.loadBedSpaces()
@@ -100,14 +121,60 @@ fun DormOccupancyScreen(
                 )
             }
 
-            items(houses) { house ->
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    AllocationFilter(
+                        label = "House",
+                        selectedLabel = houses.firstOrNull { it.id == selectedHouseFilter }?.name
+                            ?: "All houses",
+                        options = listOf("ALL" to "All houses") + houses.map { it.id to it.name },
+                        modifier = Modifier.weight(1f),
+                        onSelected = {
+                            selectedHouseFilter = it
+                            selectedDormitoryFilter = "ALL"
+                        }
+                    )
+                    AllocationFilter(
+                        label = "Dorm",
+                        selectedLabel = availableRooms.firstOrNull {
+                            it.id == selectedDormitoryFilter
+                        }?.dormName ?: "All dorms",
+                        options = listOf("ALL" to "All dorms") +
+                            availableRooms.map { it.id to it.dormName },
+                        modifier = Modifier.weight(1f),
+                        onSelected = { selectedDormitoryFilter = it }
+                    )
+                    AllocationFilter(
+                        label = "Form",
+                        selectedLabel = classForms.firstOrNull {
+                            it == selectedClassFilter
+                        } ?: "All forms",
+                        options = listOf("ALL" to "All forms") +
+                            classForms.map { it to it },
+                        modifier = Modifier.weight(1f),
+                        onSelected = { selectedClassFilter = it }
+                    )
+                }
+            }
+
+            items(visibleHouses, key = { it.id }) { house ->
                 val houseRooms = rooms.filter { it.houseId == house.id }
                 val houseStudents = students.filter { it.houseId == house.id }
 
                 HouseDormSection(
                     house = house,
-                    rooms = houseRooms,
+                    rooms = houseRooms.filter {
+                        selectedDormitoryFilter == "ALL" || it.id == selectedDormitoryFilter
+                    },
                     students = houseStudents,
+                    classFormFilter = selectedClassFilter,
+                    isExpanded = expandedHouses[house.id] == true,
+                    onExpandedChange = {
+                        expandedHouses[house.id] = expandedHouses[house.id] != true
+                    },
                     canManageAllocations = canManageAllocations,
                     onAssign = { selectedStudent = it }
                 )
@@ -134,10 +201,56 @@ fun DormOccupancyScreen(
 }
 
 @Composable
+private fun AllocationFilter(
+    label: String,
+    selectedLabel: String,
+    options: List<Pair<String, String>>,
+    modifier: Modifier = Modifier,
+    onSelected: (String) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box(modifier = modifier) {
+        androidx.compose.material3.OutlinedButton(
+            onClick = { expanded = true },
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                horizontal = 8.dp,
+                vertical = 6.dp
+            )
+        ) {
+            Column {
+                Text(label, fontSize = 9.sp, color = Color(0xFF64748B))
+                Text(
+                    text = selectedLabel,
+                    fontSize = 10.sp,
+                    color = NavyPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            options.forEach { (value, title) ->
+                DropdownMenuItem(
+                    text = { Text(title) },
+                    onClick = {
+                        expanded = false
+                        onSelected(value)
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun HouseDormSection(
     house: House,
     rooms: List<RoomEntity>,
     students: List<Student>,
+    classFormFilter: String,
+    isExpanded: Boolean,
+    onExpandedChange: () -> Unit,
     canManageAllocations: Boolean,
     onAssign: (Student) -> Unit
 ) {
@@ -149,7 +262,9 @@ private fun HouseDormSection(
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onExpandedChange),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -163,13 +278,27 @@ private fun HouseDormSection(
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        text = "Housemaster: ${house.housemasterName} (${house.housemasterPhone})",
+                        text = listOf(
+                            house.housemasterName.takeIf(String::isNotBlank)
+                                ?.let { "Housemaster: $it" },
+                            house.housemasterPhone.takeIf(String::isNotBlank)
+                        ).filterNotNull().joinToString(" · ").ifBlank {
+                            "${rooms.size} dormitories"
+                        },
                         fontSize = 11.sp,
                         color = Color.Gray,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
+
+                Icon(
+                    imageVector = if (isExpanded) Icons.Default.ExpandLess
+                    else Icons.Default.ExpandMore,
+                    contentDescription = if (isExpanded) "Collapse ${house.name}"
+                    else "Expand ${house.name}",
+                    tint = NavyPrimary
+                )
 
                 Surface(
                     shape = RoundedCornerShape(8.dp),
@@ -185,13 +314,22 @@ private fun HouseDormSection(
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                text = "${rooms.size} dormitories shown · ${students.size} students in house",
+                fontSize = 11.sp,
+                color = Color(0xFF64748B),
+                modifier = Modifier.padding(top = 8.dp)
+            )
 
-            // Rooms within this house
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                rooms.forEach { room ->
-                    val roomOccupants = students.filter { it.roomId == room.id }
-                    val isFull = roomOccupants.size >= room.capacity
+            if (isExpanded) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    rooms.forEach { room ->
+                    val allRoomOccupants = students.filter { it.roomId == room.id }
+                    val roomOccupants = allRoomOccupants.filter {
+                        classFormFilter == "ALL" || it.classForm == classFormFilter
+                    }
+                    val isFull = allRoomOccupants.size >= room.capacity
 
                     Surface(
                         shape = RoundedCornerShape(8.dp),
@@ -227,7 +365,7 @@ private fun HouseDormSection(
                                 }
 
                                 Text(
-                                    text = "${roomOccupants.size} / ${room.capacity}",
+                                    text = "${allRoomOccupants.size} / ${room.capacity}",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     color = if (isFull) CrimsonAlert else EmeraldGreen,
@@ -240,7 +378,11 @@ private fun HouseDormSection(
                             // Occupants mini chips
                             if (roomOccupants.isEmpty()) {
                                 Text(
-                                    text = "No students currently assigned (Vacant Room)",
+                                    text = if (allRoomOccupants.isEmpty()) {
+                                        "No students currently assigned (Vacant Dorm)"
+                                    } else {
+                                        "No students in the selected form (${allRoomOccupants.size} assigned)"
+                                    },
                                     fontSize = 11.sp,
                                     color = Color.Gray
                                 )
@@ -272,6 +414,7 @@ private fun HouseDormSection(
                                                     color = Color(0xFF64748B),
                                                     maxLines = 1
                                                 )
+                                                }
                                             }
                                         }
                                     }

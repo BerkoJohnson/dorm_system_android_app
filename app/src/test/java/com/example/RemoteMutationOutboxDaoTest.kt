@@ -7,6 +7,7 @@ import com.example.data.local.AppDatabase
 import com.example.data.model.RemoteMutationOutboxItem
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -39,11 +40,47 @@ class RemoteMutationOutboxDaoTest {
             dao.insert(mutation("one", "user-a", "https://school-a/api/v1"))
             dao.insert(mutation("two", "user-a", "https://school-b/api/v1"))
             dao.insert(mutation("three", "user-b", "https://school-a/api/v1"))
+            assertEquals(
+                -1L,
+                dao.insert(mutation("one", "user-a", "https://school-a/api/v1"))
+            )
 
             assertEquals(1, dao.countFor("user-a", "https://school-a/api/v1"))
             assertEquals(
                 listOf("one"),
                 dao.getFor("user-a", "https://school-a/api/v1").map { it.id }
+            )
+        }
+    }
+
+    @Test
+    fun deliveryStatesRemainInspectableAndCountsExcludeDeliveredItems() {
+        val dao = database.remoteMutationOutboxDao()
+
+        kotlinx.coroutines.runBlocking {
+            dao.insert(mutation("pending", "user-a", "https://school-a/api/v1"))
+            dao.insert(
+                mutation("failed", "user-a", "https://school-a/api/v1").copy(
+                    attempts = 3,
+                    lastError = "Permission revoked.",
+                    deliveryStatus = "FAILED"
+                )
+            )
+            dao.insert(
+                mutation("delivered", "user-a", "https://school-a/api/v1").copy(
+                    deliveryStatus = "DELIVERED"
+                )
+            )
+
+            assertEquals(1, dao.countFor("user-a", "https://school-a/api/v1"))
+            assertEquals(1, dao.countFailedFor("user-a", "https://school-a/api/v1"))
+            assertEquals(
+                "Permission revoked.",
+                dao.getById("failed", "user-a", "https://school-a/api/v1")?.lastError
+            )
+            assertTrue(
+                dao.getFor("user-a", "https://school-a/api/v1")
+                    .any { it.id == "delivered" && it.deliveryStatus == "DELIVERED" }
             )
         }
     }

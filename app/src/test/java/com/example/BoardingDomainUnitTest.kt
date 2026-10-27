@@ -3,6 +3,7 @@ package com.example
 import com.example.data.model.ExeatRequest
 import com.example.data.model.Student
 import com.example.data.model.UserRole
+import com.example.data.model.HouseScopePolicy
 import com.example.data.model.userRoleFromServerRole
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -17,8 +18,49 @@ class BoardingDomainUnitTest {
         assertEquals(UserRole.SENIOR_HOUSEMASTER, userRoleFromServerRole("SENIOR_HOUSEMASTER"))
         assertEquals(UserRole.HOUSE_TUTOR, userRoleFromServerRole("HOUSE_TUTOR"))
         assertEquals(UserRole.MEDICAL, userRoleFromServerRole("MEDICAL"))
+        assertEquals(
+            UserRole.ASSISTANT_HOUSEMASTER,
+            userRoleFromServerRole("ASSISTANT_HOUSEMASTER")
+        )
+        assertEquals(UserRole.HEADMASTER, userRoleFromServerRole("HEADMASTER"))
+        assertEquals(UserRole.MATRON, userRoleFromServerRole("MATRON"))
+        assertEquals(UserRole.ACTING_HOUSEMASTER, userRoleFromServerRole("ACTING_HOUSEMASTER"))
         assertEquals(null, userRoleFromServerRole("UNASSIGNED"))
         assertEquals(null, userRoleFromServerRole("SOME_NEW_ROLE"))
+    }
+
+    @Test
+    fun operationalRolesDeclareHouseScopeAndHeadmasterReadOnly() {
+        assertTrue(UserRole.ASSISTANT_HOUSEMASTER.isHouseScoped)
+        assertTrue(UserRole.ACTING_HOUSEMASTER.isHouseScoped)
+        assertTrue(UserRole.MATRON.isHouseScoped)
+        assertFalse(UserRole.HEADMASTER.isHouseScoped)
+        assertTrue(UserRole.HEADMASTER.isReadOnly)
+        assertFalse(UserRole.HOUSEMASTER.isReadOnly)
+    }
+
+    @Test
+    fun houseScopedRolesFailClosedAndCannotSeeOtherHouseRows() {
+        val rows = listOf("house-a:one", "house-b:two")
+        val scopedRows = HouseScopePolicy.filter(
+            rows,
+            UserRole.ASSISTANT_HOUSEMASTER,
+            "house-a"
+        ) { it.substringBefore(':') }
+        assertEquals(listOf("house-a:one"), scopedRows)
+        assertTrue(
+            HouseScopePolicy.filter(
+                rows,
+                UserRole.ACTING_HOUSEMASTER,
+                null
+            ) { it.substringBefore(':') }.isEmpty()
+        )
+        assertEquals(
+            rows,
+            HouseScopePolicy.filter(rows, UserRole.HEADMASTER, null) {
+                it.substringBefore(':')
+            }
+        )
     }
 
     @Test

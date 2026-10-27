@@ -52,6 +52,7 @@ class DjangoDataSync(
             )
         }
         val features = me.optJSONObject("features") ?: JSONObject()
+        api.recordSuccessfulValidation(me)
         onSessionVerified(capabilities, features)
 
         val dashboard = api.get("dashboard/")
@@ -72,7 +73,11 @@ class DjangoDataSync(
         val students = if (capabilities.optBoolean("students_view")) {
             fetchAll("students/")
                 .filter { isInHouseScope(it.optJSONObject("house")?.optString("id"), assignedHouseId, schoolWide) }
-                .mapNotNull(::studentFrom)
+                .mapNotNull { json ->
+                    val mapped = studentFrom(json) ?: return@mapNotNull null
+                    val cached = database.studentDao().getStudentByIdDirect(mapped.id)
+                    preserveUnprovidedStudentDetails(json, mapped, cached)
+                }
         } else {
             emptyList()
         }
@@ -232,21 +237,60 @@ class DjangoDataSync(
         val guardian = json.optJSONObject("guardian")
         val isActiveExeat = json.optBoolean("is_active_exeat")
         val enrollmentStatus = json.optString("status")
+        val program = firstNonBlank(
+            json.optString("program"),
+            json.optString("programme"),
+            json.optString("course"),
+            json.optString("track"),
+            json.optJSONObject("program")?.optString("name"),
+            json.optJSONObject("programme")?.optString("name"),
+            classGroup?.optString("program"),
+            classGroup?.optString("programme"),
+            classGroup?.optJSONObject("program")?.optString("name"),
+            classGroup?.optJSONObject("programme")?.optString("name")
+        )
+        val bedNumber = listOf(
+            json.optInt("bed_number", 0),
+            json.optInt("bed", 0),
+            json.optJSONObject("bed")?.optInt("number", 0) ?: 0,
+            room?.optInt("bed_number", 0) ?: 0,
+            room?.optJSONObject("bed")?.optInt("number", 0) ?: 0,
+            dormitory?.optInt("bed_number", 0) ?: 0
+        ).firstOrNull { it > 0 } ?: 0
         return Student(
             id = id,
             studentId = json.optString("index_number")
                 .takeUnless { it.isBlank() || it == "null" }
                 ?: json.optString("admission_no").takeUnless { it == "null" }.orEmpty(),
-            fullName = json.optString("full_name", "Student"),
-            gender = json.optString("gender"),
-            classForm = classGroup?.optString("name").orEmpty(),
-            program = "",
-            houseId = house?.optString("id").takeUnless { it.isNullOrBlank() || it == "null" }.orEmpty(),
-            roomId = dormitory?.optString("id").takeUnless { it.isNullOrBlank() || it == "null" }.orEmpty(),
-            bedNumber = 0,
-            guardianName = guardian?.optString("full_name").takeUnless { it.isNullOrBlank() || it == "null" }.orEmpty(),
-            guardianPhone = guardian?.optString("phone_number").takeUnless { it.isNullOrBlank() || it == "null" }.orEmpty(),
-            guardianRelationship = "",
+            fullName = firstNonBlank(json.optString("full_name"), json.optString("name"))
+                .ifBlank { "Student" },
+            gender = json.optString("gender").takeUnless { it == "null" }.orEmpty(),
+            classForm = firstNonBlank(
+                classGroup?.optString("name"),
+                json.optString("class_form"),
+                json.optString("form")
+            ),
+            program = program,
+            houseId = firstNonBlank(house?.optString("id"), json.optString("house_id")),
+            roomId = firstNonBlank(
+                dormitory?.optString("id"),
+                json.optString("dormitory_id")
+            ),
+            bedNumber = bedNumber,
+            guardianName = firstNonBlank(
+                guardian?.optString("full_name"),
+                json.optString("guardian_name")
+            ),
+            guardianPhone = firstNonBlank(
+                guardian?.optString("phone_number"),
+                guardian?.optString("phone"),
+                json.optString("guardian_phone")
+            ),
+            guardianRelationship = firstNonBlank(
+                guardian?.optString("relationship"),
+                guardian?.optString("relationship_to_student"),
+                json.optString("guardian_relationship")
+            ),
             status = when {
                 isActiveExeat -> "ON_EXEAT"
                 enrollmentStatus == "ENROLLED" -> "IN_DORM"
@@ -255,12 +299,106 @@ class DjangoDataSync(
             qrCodeKey = json.optString("public_token").takeUnless {
                 it.isBlank() || it == "null"
             }.orEmpty(),
-            emergencyNotes = "",
-            assignedRoomId = room?.optString("id")
-                ?.takeUnless { it.isBlank() || it == "null" },
-            assignedRoomName = room?.optString("name").orEmpty()
+            emergencyNotes = firstNonBlank(
+                json.optString("emergency_notes"),
+                json.optString("medical_notes"),
+                json.optString("medical_alerts"),
+                json.optString("health_notes")
+            ).ifBlank { "Unknown" },
+            assignedRoomId = firstNonBlank(
+                room?.optString("id"),
+                json.optString("room_id")
+            ).takeIf(String::isNotBlank),
+            assignedRoomName = firstNonBlank(
+                room?.optString("name"),
+                json.optString("room_name")
+            ),
+            photoUrl = resolveStudentPhotoUrl(firstNonBlank(
+                json.optString("photo_url"),
+                json.optString("profile_photo_url"),
+                json.optString("image_url"),
+                json.optJSONObject("photo")?.optString("url"),
+                json.optJSONObject("profile_photo")?.optString("url")
+            ))
         )
     }
+
+    private fun firstNonBlank(vararg values: String?): String =
+        values.firstNotNullOfOrNull { value ->
+            value?.takeIf { it.isNotBlank() && it != "null" }
+        }.orEmpty()
+
+    private fun resolveStudentPhotoUrl(value: String): String {
+        if (value.isBlank() || value.startsWith("https://") || value.startsWith("http://")) {
+            return value
+        }
+        val origin = api.baseUrl.removeSuffix("/api/v1")
+        return "$origin/${value.trimStart('/')}"
+    }
+
+    internal fun preserveUnprovidedStudentDetails(
+        json: JSONObject,
+        mapped: Student,
+        cached: Student?
+    ): Student {
+        if (cached == null) return mapped
+        val guardian = json.optJSONObject("guardian")
+        val classGroup = json.optJSONObject("class_group")
+        val room = json.optJSONObject("room")
+        val dormitory = json.optJSONObject("dormitory")
+        val allocation = json.optJSONObject("allocation")
+        val hasProgram = hasAny(json, "program", "programme", "course", "track") ||
+            hasAny(classGroup, "program", "programme")
+        val hasBedNumber = hasAny(json, "bed_number", "bed") ||
+            hasAny(room, "bed_number", "bed") ||
+            hasAny(dormitory, "bed_number", "bed") ||
+            hasAny(allocation, "bed_number", "bed")
+        val hasGuardianName = hasAny(guardian, "full_name", "name") ||
+            hasAny(json, "guardian_name")
+        val hasGuardianPhone = hasAny(guardian, "phone_number", "phone") ||
+            hasAny(json, "guardian_phone")
+        val hasGuardianRelationship =
+            hasAny(guardian, "relationship", "relationship_to_student") ||
+                hasAny(json, "guardian_relationship")
+        val hasEmergencyNotes =
+            hasAny(json, "emergency_notes", "medical_notes", "medical_alerts", "health_notes")
+        val hasPhoto = hasAny(json, "photo_url", "profile_photo_url", "image_url") ||
+            hasAny(json.optJSONObject("photo"), "url") ||
+            hasAny(json.optJSONObject("profile_photo"), "url")
+        return mapped.copy(
+            classForm = if (
+                hasAny(classGroup, "name") || hasAny(json, "class_form", "form")
+            ) mapped.classForm else cached.classForm,
+            program = if (hasProgram) mapped.program else cached.program,
+            bedNumber = if (hasBedNumber) mapped.bedNumber else cached.bedNumber,
+            guardianName = if (hasGuardianName) mapped.guardianName else cached.guardianName,
+            guardianPhone = if (hasGuardianPhone) mapped.guardianPhone else cached.guardianPhone,
+            guardianRelationship = if (hasGuardianRelationship) {
+                mapped.guardianRelationship
+            } else {
+                cached.guardianRelationship
+            },
+            emergencyNotes = if (hasEmergencyNotes) mapped.emergencyNotes else cached.emergencyNotes,
+            photoUrl = if (hasPhoto) mapped.photoUrl else cached.photoUrl,
+            roomId = if (
+                hasAny(dormitory, "id") || hasAny(json, "dormitory_id")
+            ) mapped.roomId else cached.roomId,
+            assignedRoomId = if (hasAny(room, "id") || hasAny(json, "room_id")) {
+                mapped.assignedRoomId
+            } else cached.assignedRoomId,
+            assignedRoomName = if (hasAny(room, "name") || hasAny(json, "room_name")) {
+                mapped.assignedRoomName
+            } else {
+                cached.assignedRoomName
+            },
+            qrCodeKey = if (hasAny(json, "public_token")) mapped.qrCodeKey else cached.qrCodeKey
+        )
+    }
+
+    private fun hasAny(json: JSONObject?, vararg keys: String): Boolean =
+        json != null && keys.any { key ->
+            json.has(key) && !json.isNull(key)
+        }
 
     fun exeatFrom(json: JSONObject): ExeatRequest? {
         val student = json.optJSONObject("student")

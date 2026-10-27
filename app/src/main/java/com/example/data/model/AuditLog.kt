@@ -10,5 +10,7 @@ data class AuditLog(
     val actorRole: String,
     val actorName: String,
     val details: String,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    val ownerId: String = "",
+    val tenantUrl: String = ""
 )

@@ -28,7 +28,7 @@ import com.example.data.model.Student
         RollCallOutboxItem::class,
         RemoteMutationOutboxItem::class
     ],
-    version = 4,
+    version = 9,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -95,6 +95,58 @@ abstract class AppDatabase : RoomDatabase() {
                 )
             }
         }
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE gate_movements ADD COLUMN syncStatus TEXT NOT NULL DEFAULT 'SYNCED'"
+                )
+                db.execSQL("ALTER TABLE gate_movements ADD COLUMN syncError TEXT")
+            }
+        }
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE remote_mutation_outbox " +
+                        "ADD COLUMN deliveryStatus TEXT NOT NULL DEFAULT 'PENDING'"
+                )
+                db.execSQL(
+                    "ALTER TABLE roll_call_outbox " +
+                        "ADD COLUMN deliveryStatus TEXT NOT NULL DEFAULT 'PENDING'"
+                )
+                db.execSQL(
+                    "UPDATE remote_mutation_outbox SET deliveryStatus = 'FAILED' " +
+                        "WHERE lastError IS NOT NULL"
+                )
+                db.execSQL(
+                    "UPDATE roll_call_outbox SET deliveryStatus = 'FAILED' " +
+                        "WHERE lastError LIKE 'REJECTED: %'"
+                )
+            }
+        }
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE roll_call_outbox ADD COLUMN remarksJson TEXT NOT NULL DEFAULT ''"
+                )
+            }
+        }
+        private val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE students ADD COLUMN photoUrl TEXT NOT NULL DEFAULT ''"
+                )
+            }
+        }
+        private val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE audit_logs ADD COLUMN ownerId TEXT NOT NULL DEFAULT ''"
+                )
+                db.execSQL(
+                    "ALTER TABLE audit_logs ADD COLUMN tenantUrl TEXT NOT NULL DEFAULT ''"
+                )
+            }
+        }
 
         @Volatile
         private var INSTANCE: AppDatabase? = null
@@ -109,6 +161,11 @@ abstract class AppDatabase : RoomDatabase() {
                     .addMigrations(MIGRATION_1_2)
                     .addMigrations(MIGRATION_2_3)
                     .addMigrations(MIGRATION_3_4)
+                    .addMigrations(MIGRATION_4_5)
+                    .addMigrations(MIGRATION_5_6)
+                    .addMigrations(MIGRATION_6_7)
+                    .addMigrations(MIGRATION_7_8)
+                    .addMigrations(MIGRATION_8_9)
                     .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance

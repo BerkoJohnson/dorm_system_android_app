@@ -56,6 +56,7 @@ fun OperationsHubScreen(
     val rooms by viewModel.rooms.collectAsStateWithLifecycle()
     val syncState by viewModel.syncState.collectAsStateWithLifecycle()
     val notifications by viewModel.notifications.collectAsStateWithLifecycle()
+    val permissions by viewModel.apiPermissions.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) {
         viewModel.loadNotifications()
@@ -69,7 +70,7 @@ fun OperationsHubScreen(
     ) {
         item {
             Text(
-                text = "BOARDING OPERATIONS & CONFIG",
+                text = "BOARDING OPERATIONS",
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 1.sp,
@@ -77,15 +78,40 @@ fun OperationsHubScreen(
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "Administrative tools, official student records, dorm space allocations, and central backend sync.",
+                text = "Student records, dorm spaces, saved changes, and school data.",
                 fontSize = 12.sp,
                 color = Color(0xFF475569)
             )
             Spacer(modifier = Modifier.height(8.dp))
         }
 
-        // Student Directory Hub Item
         item {
+            val failedCount = syncState.failedOutboxCount
+            HubNavigationCard(
+                icon = Icons.Default.CloudSync,
+                iconTint = if (failedCount > 0) Color(0xFFB91C1C) else EdenElectricBlue,
+                title = "Delivery outbox",
+                subtitle = "Inspect queued school changes and resolve failed deliveries",
+                badge = if (failedCount > 0) "$failedCount Failed" else
+                    "${syncState.pendingOutboxCount} Pending",
+                badgeColor = if (failedCount > 0) Color(0xFFFEE2E2) else Color(0xFFDBEAFE),
+                badgeTextColor = if (failedCount > 0) Color(0xFFB91C1C) else EdenElectricBlue,
+                onClick = { viewModel.navigateTo(AppScreen.OUTBOX) }
+            )
+        }
+
+        item {
+            HubNavigationCard(
+                icon = Icons.Default.Notifications,
+                iconTint = EdenElectricBlue,
+                title = "Help & school data",
+                subtitle = "Offline work, saved changes, access and setup guidance",
+                badge = "Help",
+                onClick = { viewModel.navigateTo(AppScreen.HELP) }
+            )
+        }
+
+        if (permissions.studentsView) item {
             HubNavigationCard(
                 icon = Icons.Default.People,
                 iconTint = EdenDeepNavy,
@@ -96,8 +122,7 @@ fun OperationsHubScreen(
             )
         }
 
-        // Dormitory Allocations Hub Item
-        item {
+        if (permissions.studentsView) item {
             HubNavigationCard(
                 icon = Icons.Default.Bed,
                 iconTint = EdenBrightGreen,
@@ -108,8 +133,7 @@ fun OperationsHubScreen(
             )
         }
 
-        // Roll Call Audit History
-        item {
+        if (permissions.rollCall || permissions.isSeniorHousemaster || permissions.isAdmin) item {
             HubNavigationCard(
                 icon = Icons.Default.History,
                 iconTint = EdenElectricBlue,
@@ -133,14 +157,17 @@ fun OperationsHubScreen(
             )
         }
 
-        // Django REST Sync & System Audit Logs
-        item {
+        if (permissions.isAdmin || permissions.reports || permissions.auditView) item {
             HubNavigationCard(
                 icon = Icons.Default.CloudSync,
                 iconTint = EdenDeepNavy,
-                title = "Django API Sync & Audit Trail",
-                subtitle = if (syncState.isOnline) "Connected • ${syncState.apiBaseUrl}" else "Offline-Ready Cache",
-                badge = if (syncState.isOnline) "Online Sync" else "Offline",
+                title = "School data sync & audit history",
+                subtitle = if (syncState.isOnline) {
+                    "School data is connected and ready to refresh."
+                } else {
+                    "Saved school data is available offline."
+                },
+                badge = if (syncState.isOnline) "Connected" else "Offline",
                 badgeColor = if (syncState.isOnline) Color(0xFFDCFCE7) else Color(0xFFFEF3C7),
                 badgeTextColor = if (syncState.isOnline) EdenBrightGreen else Color(0xFFB45309),
                 onClick = { viewModel.navigateTo(AppScreen.REPORTS_SYNC) }

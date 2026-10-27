@@ -28,7 +28,7 @@ interface StudentDao {
     @Query("SELECT * FROM students WHERE qrCodeKey = :qrKey LIMIT 1")
     suspend fun getStudentByQrKey(qrKey: String): Student?
 
-    @Query("SELECT * FROM students WHERE studentId = :indexNumber LIMIT 1")
+    @Query("SELECT * FROM students WHERE studentId = :indexNumber COLLATE NOCASE LIMIT 1")
     suspend fun getStudentByIndexNumber(indexNumber: String): Student?
 
     @Query("UPDATE students SET status = :status WHERE id = :id")
@@ -48,6 +48,9 @@ interface StudentDao {
 
     @Query("SELECT COUNT(*) FROM students")
     suspend fun getStudentCount(): Int
+
+    @Query("SELECT COUNT(*) FROM students")
+    suspend fun countStudents(): Int
 
     @Query("DELETE FROM students")
     suspend fun clear()

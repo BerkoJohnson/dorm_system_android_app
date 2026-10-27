@@ -58,6 +58,8 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.model.House
 import com.example.data.model.UserRole
+import com.example.data.remote.DjangoApiClient
+import com.example.ui.components.TenantLogo
 import com.example.ui.theme.AmberWarning
 import com.example.ui.theme.CrimsonAlert
 import com.example.ui.theme.EmeraldGreen
@@ -73,6 +75,7 @@ import java.util.Locale
 @Composable
 fun DashboardScreen(
     viewModel: MainViewModel,
+    apiClient: DjangoApiClient,
     modifier: Modifier = Modifier
 ) {
     val currentRole by viewModel.currentRole.collectAsStateWithLifecycle()
@@ -92,6 +95,11 @@ fun DashboardScreen(
             WelcomeBanner(
                 role = currentRole,
                 metrics = metrics,
+                schoolName = apiClient.configuredSchoolName,
+                schoolAddress = apiClient.configuredSchoolAddress,
+                schoolPhone = apiClient.configuredSchoolPhone,
+                schoolEmail = apiClient.configuredSchoolEmail,
+                schoolLogoUrl = apiClient.configuredSchoolLogoUrl,
                 onNavigate = { viewModel.navigateTo(it) }
             )
         }
@@ -409,6 +417,11 @@ fun DashboardScreen(
 private fun WelcomeBanner(
     role: UserRole,
     metrics: DashboardMetrics,
+    schoolName: String,
+    schoolAddress: String,
+    schoolPhone: String,
+    schoolEmail: String,
+    schoolLogoUrl: String,
     onNavigate: (AppScreen) -> Unit
 ) {
     Card(
@@ -445,10 +458,12 @@ private fun WelcomeBanner(
                                 .background(Color.White.copy(alpha = 0.12f)),
                             contentAlignment = Alignment.Center
                         ) {
-                            androidx.compose.foundation.Image(
-                                painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.eden_logo),
-                                contentDescription = "Eden Creative Systems",
-                                modifier = Modifier.size(26.dp)
+                            TenantLogo(
+                                logoUrl = schoolLogoUrl,
+                                contentDescription = "$schoolName logo",
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .clip(RoundedCornerShape(8.dp))
                             )
                         }
                         Spacer(modifier = Modifier.width(10.dp))
@@ -456,8 +471,12 @@ private fun WelcomeBanner(
                             Text(
                                 text = when (role) {
                                     UserRole.HOUSEMASTER -> "Housemaster Duty Portal"
+                                    UserRole.ASSISTANT_HOUSEMASTER -> "Assistant Housemaster Portal"
+                                    UserRole.ACTING_HOUSEMASTER -> "Acting Housemaster Portal"
                                     UserRole.HOUSE_TUTOR -> "House Tutor Duty Portal"
                                     UserRole.SENIOR_HOUSEMASTER -> "Senior Housemaster Portal"
+                                    UserRole.HEADMASTER -> "Headmaster Oversight"
+                                    UserRole.MATRON -> "Matron Portal"
                                     UserRole.MEDICAL -> "Medical / Infirmary Portal"
                                     UserRole.GATE_OFFICER -> "Campus Gate Security"
                                     UserRole.ADMINISTRATOR -> "School Boarding Admin"
@@ -468,10 +487,24 @@ private fun WelcomeBanner(
                                 overflow = TextOverflow.Ellipsis
                             )
                             Text(
-                                text = "Eden Creative Systems • SHS Boarding",
+                                text = schoolName.ifBlank { "Boarding management" },
                                 color = GoldAccent,
-                                style = MaterialTheme.typography.labelSmall
+                                style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
+                            val contactLine = listOf(schoolAddress, schoolPhone, schoolEmail)
+                                .filter(String::isNotBlank)
+                                .joinToString(" · ")
+                            if (contactLine.isNotBlank()) {
+                                Text(
+                                    text = contactLine,
+                                    color = Color(0xFFDCE6F2),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
                     }
 
@@ -497,10 +530,18 @@ private fun WelcomeBanner(
                             "${metrics.pendingExeats} pending exeat requests need your review."
                         else
                             "All dorms are accounted for and ready for the next roll call."
+                    UserRole.ASSISTANT_HOUSEMASTER ->
+                        "Support house duties within your assigned house."
+                    UserRole.ACTING_HOUSEMASTER ->
+                        "Manage delegated duties within your assigned house."
                     UserRole.HOUSE_TUTOR ->
                         "Review attendance for your assigned house."
                     UserRole.SENIOR_HOUSEMASTER ->
                         "Review school boarding operations and house attendance."
+                    UserRole.HEADMASTER ->
+                        "View school boarding activity and reports."
+                    UserRole.MATRON ->
+                        "Support student welfare within your assigned house."
                     UserRole.MEDICAL ->
                         "Review medical exeat requests within your assigned scope."
                     UserRole.GATE_OFFICER ->
@@ -522,8 +563,12 @@ private fun WelcomeBanner(
                         onClick = {
                             when (role) {
                                 UserRole.HOUSEMASTER -> onNavigate(AppScreen.ROLL_CALL)
+                                UserRole.ASSISTANT_HOUSEMASTER -> onNavigate(AppScreen.ROLL_CALL)
+                                UserRole.ACTING_HOUSEMASTER -> onNavigate(AppScreen.ROLL_CALL)
                                 UserRole.HOUSE_TUTOR -> onNavigate(AppScreen.ROLL_CALL)
                                 UserRole.SENIOR_HOUSEMASTER -> onNavigate(AppScreen.ROLL_CALL_HISTORY)
+                                UserRole.HEADMASTER -> onNavigate(AppScreen.REPORTS_SYNC)
+                                UserRole.MATRON -> onNavigate(AppScreen.EXEATS)
                                 UserRole.MEDICAL -> onNavigate(AppScreen.EXEATS)
                                 UserRole.GATE_OFFICER -> onNavigate(AppScreen.GATE_CHECK)
                                 UserRole.ADMINISTRATOR -> onNavigate(AppScreen.REPORTS_SYNC)
@@ -535,8 +580,12 @@ private fun WelcomeBanner(
                         Text(
                             text = when (role) {
                                 UserRole.HOUSEMASTER -> "Start Roll Call"
+                                UserRole.ASSISTANT_HOUSEMASTER -> "Start Roll Call"
+                                UserRole.ACTING_HOUSEMASTER -> "Start Roll Call"
                                 UserRole.HOUSE_TUTOR -> "Start Roll Call"
                                 UserRole.SENIOR_HOUSEMASTER -> "Review Roll Call"
+                                UserRole.HEADMASTER -> "School Reports"
+                                UserRole.MATRON -> "Review Student Welfare"
                                 UserRole.MEDICAL -> "Review Exeats"
                                 UserRole.GATE_OFFICER -> "Open QR Scanner"
                                 UserRole.ADMINISTRATOR -> "Administration & Sync"
@@ -546,6 +595,25 @@ private fun WelcomeBanner(
                             fontSize = 12.sp
                         )
                     }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    androidx.compose.foundation.Image(
+                        painter = androidx.compose.ui.res.painterResource(
+                            id = com.example.R.drawable.eden_logo
+                        ),
+                        contentDescription = "Eden Creative Systems",
+                        modifier = Modifier.size(width = 48.dp, height = 20.dp)
+                    )
+                    Text(
+                        text = "Created by Eden Creative Systems",
+                        color = Color(0xFFDCE6F2),
+                        style = MaterialTheme.typography.labelSmall
+                    )
                 }
             }
         }
@@ -843,7 +911,31 @@ fun GateMovementRow(movement: com.example.data.model.GateMovement) {
                     fontSize = 11.sp,
                     color = Color.Gray
                 )
+                val syncLabel = when (movement.syncStatus) {
+                    "PENDING_SYNC" -> "Verified locally • Pending sync"
+                    "REVIEW_REQUIRED" -> "Server rejected • Review required"
+                    "DISCARDED" -> "Removed from sync queue"
+                    else -> "Synchronized"
+                }
+                Text(
+                    text = syncLabel,
+                    fontSize = 10.sp,
+                    color = when (movement.syncStatus) {
+                        "PENDING_SYNC" -> Color(0xFFB45309)
+                        "REVIEW_REQUIRED" -> CrimsonAlert
+                        "DISCARDED" -> Color(0xFF64748B)
+                        else -> EmeraldGreen
+                    }
+                )
             }
+        }
+        if (movement.syncStatus == "REVIEW_REQUIRED" && !movement.syncError.isNullOrBlank()) {
+            Text(
+                text = movement.syncError,
+                color = CrimsonAlert,
+                fontSize = 11.sp,
+                modifier = Modifier.padding(start = 58.dp, end = 12.dp, bottom = 10.dp)
+            )
         }
     }
 }

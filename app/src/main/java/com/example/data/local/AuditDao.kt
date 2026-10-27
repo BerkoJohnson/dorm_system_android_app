@@ -9,8 +9,11 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface AuditDao {
-    @Query("SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT 200")
-    fun getAllAuditLogs(): Flow<List<AuditLog>>
+    @Query(
+        "SELECT * FROM audit_logs WHERE ownerId = :ownerId AND tenantUrl = :tenantUrl " +
+            "ORDER BY timestamp DESC LIMIT 200"
+    )
+    fun getAuditLogs(ownerId: String, tenantUrl: String): Flow<List<AuditLog>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAuditLog(log: AuditLog)

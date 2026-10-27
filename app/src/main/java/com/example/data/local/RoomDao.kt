@@ -12,6 +12,9 @@ interface RoomDao {
     @Query("SELECT * FROM rooms ORDER BY houseId, dormName ASC")
     fun getAllRooms(): Flow<List<RoomEntity>>
 
+    @Query("SELECT COUNT(*) FROM rooms")
+    suspend fun countRooms(): Int
+
     @Query("SELECT * FROM rooms WHERE houseId = :houseId ORDER BY dormName ASC")
     fun getRoomsByHouse(houseId: String): Flow<List<RoomEntity>>
 

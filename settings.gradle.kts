@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "Eden SHS Boarding"
+rootProject.name = "Edenest"
 
 include(":app")

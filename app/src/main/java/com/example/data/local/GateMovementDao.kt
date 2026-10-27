@@ -15,11 +15,14 @@ interface GateMovementDao {
     @Query("SELECT * FROM gate_movements ORDER BY timestamp DESC LIMIT :limit")
     fun getRecentMovements(limit: Int = 100): Flow<List<GateMovement>>
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertMovement(movement: GateMovement)
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertMovement(movement: GateMovement): Long
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertMovements(movements: List<GateMovement>)
+
+    @Query("UPDATE gate_movements SET syncStatus = :status, syncError = :error WHERE id = :id")
+    suspend fun updateSyncState(id: String, status: String, error: String?)
 
     @Query("DELETE FROM gate_movements")
     suspend fun clear()

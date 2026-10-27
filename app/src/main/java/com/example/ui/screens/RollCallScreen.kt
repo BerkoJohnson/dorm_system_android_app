@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -33,6 +35,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -92,10 +95,12 @@ fun RollCallScreen(
 
     // Map of studentId -> status (PRESENT, ABSENT, ON_EXEAT, SICK_BAY)
     val statusMap = remember { mutableStateMapOf<String, String>() }
+    val remarksMap = remember { mutableStateMapOf<String, String>() }
 
     // Update defaults when roomStudents change
     LaunchedEffect(roomStudents) {
         statusMap.clear()
+        remarksMap.clear()
         roomStudents.forEach { student ->
             statusMap[student.id] = if (student.status == "ON_EXEAT") "ON_EXEAT" else "UNMARKED"
         }
@@ -105,6 +110,7 @@ fun RollCallScreen(
     val absentCount = statusMap.values.count { it == "ABSENT" }
     val exeatCount = statusMap.values.count { it == "ON_EXEAT" }
     val sickCount = statusMap.values.count { it == "SICK_BAY" }
+    val activityCount = statusMap.values.count { it == "ACTIVITY" }
 
     Column(
         modifier = modifier
@@ -137,7 +143,7 @@ fun RollCallScreen(
                                 text = when (sessionType) {
                                     "EVENING_ROLL_CALL" -> "Evening Roll Call"
                                     "MORNING_INSPECTION" -> "Morning Inspection"
-                                    else -> "Curfew Check"
+                                    else -> "Special roll call"
                                 },
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
@@ -167,7 +173,7 @@ fun RollCallScreen(
                                 }
                             )
                             DropdownMenuItem(
-                                text = { Text("Emergency Roll Call") },
+                                text = { Text("Special roll call") },
                                 onClick = {
                                     sessionType = "CURFEW_CHECK"
                                     sessionMenuExpanded = false
@@ -302,7 +308,8 @@ fun RollCallScreen(
                     .padding(horizontal = 14.dp, vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                val accountedCount = presentCount + exeatCount + sickCount
+                val accountedCount = presentCount + exeatCount + sickCount +
+                    absentCount + activityCount
                 val totalCount = roomStudents.size.coerceAtLeast(1)
                 val fraction = (accountedCount.toFloat() / totalCount).coerceIn(0f, 1f)
                 val percent = (fraction * 100).toInt()
@@ -372,6 +379,13 @@ fun RollCallScreen(
                         fontSize = 12.sp,
                         modifier = Modifier.weight(1f)
                     )
+                    Text(
+                        text = "Activity $activityCount",
+                        color = Color(0xFF93C5FD),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        modifier = Modifier.weight(1f)
+                    )
                 }
             }
         }
@@ -436,8 +450,12 @@ fun RollCallScreen(
                     RollCallStudentCard(
                         student = student,
                         currentStatus = statusMap[student.id] ?: "UNMARKED",
+                        remarks = remarksMap[student.id].orEmpty(),
                         onStatusChange = { newStatus ->
                             statusMap[student.id] = newStatus
+                        },
+                        onRemarksChange = { value ->
+                            remarksMap[student.id] = value
                         }
                     )
                 }
@@ -456,7 +474,11 @@ fun RollCallScreen(
             colors = ButtonDefaults.buttonColors(containerColor = NavyPrimary),
             enabled = roomStudents.isNotEmpty() &&
                 statusMap.size == roomStudents.size &&
-                statusMap.values.none { it == "UNMARKED" }
+                statusMap.values.none { it == "UNMARKED" } &&
+                statusMap.none { (studentId, status) ->
+                    status in setOf("ABSENT", "SICK_BAY") &&
+                        remarksMap[studentId].orEmpty().isBlank()
+                }
         ) {
             Icon(
                 imageVector = Icons.Default.Lock,
@@ -518,6 +540,7 @@ fun RollCallScreen(
                             roomId = currentRoom?.id.orEmpty(),
                             sessionType = sessionType,
                             markedStatuses = statusMap.toMap(),
+                            remarks = remarksMap.toMap(),
                             onResult = { result ->
                                 submittedMessage = result
                                 submitFailed = result.startsWith("Roll call was not submitted:")
@@ -543,7 +566,9 @@ fun RollCallScreen(
 private fun RollCallStudentCard(
     student: Student,
     currentStatus: String,
-    onStatusChange: (String) -> Unit
+    remarks: String,
+    onStatusChange: (String) -> Unit,
+    onRemarksChange: (String) -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -616,7 +641,9 @@ private fun RollCallStudentCard(
 
             // Quick Status Buttons
             Row(
-                modifier = Modifier.align(Alignment.End),
+                modifier = Modifier
+                    .align(Alignment.End)
+                    .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 StatusToggleButton(
@@ -652,6 +679,26 @@ private fun RollCallStudentCard(
                     isSelected = currentStatus == "ABSENT",
                     activeColor = CrimsonAlert,
                     onClick = { onStatusChange("ABSENT") }
+                )
+                StatusToggleButton(
+                    label = "ACT",
+                    isSelected = currentStatus == "ACTIVITY",
+                    activeColor = Color(0xFF2563EB),
+                    onClick = { onStatusChange("ACTIVITY") }
+                )
+            }
+            if (currentStatus == "ABSENT" || currentStatus == "SICK_BAY") {
+                OutlinedTextField(
+                    value = remarks,
+                    onValueChange = onRemarksChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = {
+                        Text(
+                            if (currentStatus == "ABSENT") "Reason for absence (required)"
+                            else "Reason for infirmary (required)"
+                        )
+                    },
+                    singleLine = true
                 )
             }
         }

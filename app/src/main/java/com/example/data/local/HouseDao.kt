@@ -12,6 +12,9 @@ interface HouseDao {
     @Query("SELECT * FROM houses ORDER BY name ASC")
     fun getAllHouses(): Flow<List<House>>
 
+    @Query("SELECT COUNT(*) FROM houses")
+    suspend fun countHouses(): Int
+
     @Query("SELECT * FROM houses WHERE id = :id LIMIT 1")
     fun getHouseById(id: String): Flow<House?>
 

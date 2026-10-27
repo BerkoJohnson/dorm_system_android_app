@@ -1,13 +1,20 @@
 package com.example
 
+import android.Manifest
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Bundle
+import android.os.Build
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -23,6 +30,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Analytics
 import androidx.compose.material.icons.filled.Bed
 import androidx.compose.material.icons.filled.Checklist
+import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material.icons.filled.People
@@ -48,7 +56,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Color
@@ -59,13 +69,21 @@ import androidx.compose.animation.core.spring
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.core.content.ContextCompat
 import androidx.compose.ui.Alignment
 import com.example.data.local.AppDatabase
 import com.example.data.remote.DjangoApiClient
+import com.example.data.remote.DjangoApiException
 import com.example.data.remote.DjangoDataSync
+import com.example.data.remote.OfflineStartupPolicy
+import com.example.data.remote.SessionValidationFailure
 import com.example.data.repository.BoardingRepository
+import com.example.data.repository.NotificationWorkScheduler
+import com.example.data.repository.SchoolShortcutManager
+import com.example.data.repository.SchoolNotificationCenter
 import com.example.data.repository.SyncManager
 import com.example.ui.components.RoleSelectorBar
 import com.example.ui.screens.ApiLoginScreen
@@ -73,8 +91,10 @@ import com.example.ui.screens.DashboardScreen
 import com.example.ui.screens.DormOccupancyScreen
 import com.example.ui.screens.ExeatScreen
 import com.example.ui.screens.GateCheckScreen
+import com.example.ui.screens.HelpScreen
 import com.example.ui.screens.NotificationsScreen
 import com.example.ui.screens.OperationsHubScreen
+import com.example.ui.screens.OutboxScreen
 import com.example.ui.screens.ReportsAuditScreen
 import com.example.ui.screens.RollCallScreen
 import com.example.ui.screens.RollCallHistoryScreen
@@ -87,11 +107,18 @@ import com.example.ui.viewmodel.MainViewModel
 import com.example.data.model.UserRole
 import com.example.data.model.userRoleFromServerRole
 import java.io.IOException
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 
 class MainActivity : ComponentActivity() {
+    private val notificationIntent = MutableStateFlow<Intent?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        SchoolNotificationCenter.createChannels(this)
+        notificationIntent.value = intent.takeIf(::isNavigationIntent)
 
         val db = AppDatabase.getDatabase(this)
         val repo = BoardingRepository(db)
@@ -102,17 +129,44 @@ class MainActivity : ComponentActivity() {
         setContent {
             SHSBoardingTheme {
                 val viewModel: MainViewModel = remember {
-                    MainViewModel(repo, syncManager, dataSync, apiClient)
+                    MainViewModel(repo, syncManager, dataSync, apiClient, applicationContext)
                 }
 
-                SHSAppRoot(viewModel = viewModel, apiClient = apiClient)
+                SHSAppRoot(
+                    viewModel = viewModel,
+                    apiClient = apiClient,
+                    notificationIntent = notificationIntent
+                )
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        notificationIntent.value = intent.takeIf(::isNavigationIntent)
+    }
+
+    private fun isNavigationIntent(intent: Intent): Boolean =
+        intent.action == SchoolNotificationCenter.ACTION_OPEN_NOTIFICATION ||
+            intent.action == SchoolShortcutManager.ACTION_OPEN_SHORTCUT
+
+    fun consumeNotificationIntent() {
+        notificationIntent.value = null
+    }
+
+    companion object {
+        const val EXTRA_NOTIFICATION_SCREEN = "notification_screen"
+        const val EXTRA_NOTIFICATION_ID = "notification_id"
     }
 }
 
 @Composable
-fun SHSAppRoot(viewModel: MainViewModel, apiClient: DjangoApiClient) {
+fun SHSAppRoot(
+    viewModel: MainViewModel,
+    apiClient: DjangoApiClient,
+    notificationIntent: StateFlow<Intent?>
+) {
     val currentScreen by viewModel.currentScreen.collectAsStateWithLifecycle()
     val currentRole by viewModel.currentRole.collectAsStateWithLifecycle()
     val permissions by viewModel.apiPermissions.collectAsStateWithLifecycle()
@@ -120,11 +174,20 @@ fun SHSAppRoot(viewModel: MainViewModel, apiClient: DjangoApiClient) {
     val metrics by viewModel.dashboardMetrics.collectAsStateWithLifecycle()
     val unreadNotificationCount by viewModel.unreadNotificationCount.collectAsStateWithLifecycle()
     val sessionExpired by apiClient.sessionExpired.collectAsStateWithLifecycle()
+    val pendingNotificationIntent by notificationIntent.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val scope = rememberCoroutineScope()
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { }
     var moreMenuExpanded by remember { mutableStateOf(false) }
     var checkingSession by remember { mutableStateOf(true) }
     var authenticated by remember { mutableStateOf(false) }
+    var startupMessage by remember { mutableStateOf<String?>(null) }
     val moreItems = buildList {
+        add(AppScreen.OUTBOX to ("Delivery outbox" to Icons.Default.CloudSync))
+        add(AppScreen.HELP to ("Help & school data" to Icons.Default.Notifications))
         if (permissions.gateOperate) add(AppScreen.GATE_CHECK to ("Gate lookup" to Icons.Default.QrCodeScanner))
         if (permissions.studentsView) {
             add(AppScreen.STUDENTS to ("Students" to Icons.Default.People))
@@ -143,6 +206,87 @@ fun SHSAppRoot(viewModel: MainViewModel, apiClient: DjangoApiClient) {
     }
     val moreScreens = moreItems.mapTo(mutableSetOf()) { it.first }
 
+    fun scheduleNotificationPolling(schedulePeriodic: Boolean = true) {
+        val session = try {
+            apiClient.cachedSessionForCurrentTenant()
+        } catch (_: IllegalStateException) {
+            null
+        } ?: return
+        val ownerId = session.optJSONObject("user")?.optString("id")
+            ?.takeIf(String::isNotBlank) ?: return
+        NotificationWorkScheduler.runNow(context, ownerId, apiClient.baseUrl)
+        if (schedulePeriodic) {
+            NotificationWorkScheduler.schedule(context, ownerId, apiClient.baseUrl)
+        }
+    }
+
+    LaunchedEffect(authenticated, permissions) {
+        if (authenticated) {
+            SchoolNotificationCenter.createChannels(context)
+            scheduleNotificationPolling()
+            SchoolShortcutManager.update(
+                context,
+                canRollCall = permissions.rollCall,
+                canGateOperate = permissions.gateOperate,
+                canViewExeats = permissions.exeatsView
+            )
+            if (
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.POST_NOTIFICATIONS
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                val preferences = context.getSharedPreferences(
+                    "notification_permission",
+                    Context.MODE_PRIVATE
+                )
+                if (!preferences.getBoolean("requested", false)) {
+                    preferences.edit().putBoolean("requested", true).apply()
+                    notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                }
+            }
+        } else {
+            NotificationWorkScheduler.cancel(context)
+            SchoolShortcutManager.clear(context)
+        }
+    }
+
+    DisposableEffect(lifecycleOwner, authenticated) {
+        if (!authenticated) {
+            onDispose {}
+        } else {
+            val observer = LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_RESUME) {
+                    viewModel.refreshNotificationBadge()
+                    scheduleNotificationPolling(schedulePeriodic = false)
+                }
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        }
+    }
+
+    LaunchedEffect(authenticated, pendingNotificationIntent, permissions) {
+        val pendingIntent = pendingNotificationIntent
+        if (authenticated && pendingIntent != null) {
+            val requestedScreen = AppScreen.entries.firstOrNull {
+                it.name == pendingIntent.getStringExtra(MainActivity.EXTRA_NOTIFICATION_SCREEN)
+            }
+            val accessibleScreen = when (requestedScreen) {
+                AppScreen.EXEATS -> requestedScreen.takeIf { permissions.exeatsView }
+                AppScreen.ROLL_CALL_HISTORY -> requestedScreen.takeIf { permissions.rollCall }
+                AppScreen.OUTBOX -> requestedScreen
+                else -> AppScreen.NOTIFICATIONS
+            }
+            viewModel.navigateTo(accessibleScreen ?: AppScreen.NOTIFICATIONS)
+            if (pendingIntent.action == SchoolNotificationCenter.ACTION_OPEN_NOTIFICATION) {
+                viewModel.loadNotifications()
+            }
+            (context as? MainActivity)?.consumeNotificationIntent()
+        }
+    }
+
     DisposableEffect(authenticated, context, viewModel) {
         if (!authenticated) {
             onDispose {}
@@ -158,10 +302,12 @@ fun SHSAppRoot(viewModel: MainViewModel, apiClient: DjangoApiClient) {
                         NetworkCapabilities.NET_CAPABILITY_VALIDATED
                     )
                     if (validated && !wasValidated) viewModel.triggerSync()
+                    if (!validated && wasValidated) viewModel.reportOffline()
                     wasValidated = validated
                 }
 
                 override fun onLost(network: Network) {
+                    viewModel.reportOffline()
                     wasValidated = false
                 }
             }
@@ -171,34 +317,55 @@ fun SHSAppRoot(viewModel: MainViewModel, apiClient: DjangoApiClient) {
     }
 
     LaunchedEffect(apiClient) {
-        viewModel.clearCachedSchoolData()
         if (apiClient.hasSession && apiClient.tenantConfigured) {
             try {
-                val session = apiClient.get("auth/me/")
-                val user = session.optJSONObject("user")
-                val role = user?.optString("role").orEmpty()
-                val appRole = validatedSessionRole(session)
-                    ?: throw IOException("This account has no supported active staff role. Contact the school administrator.")
-                val capabilities = user?.optJSONObject("capabilities")
-                if (
-                    role in setOf("HOUSEMASTER", "HOUSE_TUTOR") &&
-                    capabilities?.optString("house_id").isNullOrBlank()
-                ) {
-                    throw IOException("This account is not assigned to a house. Contact the school administrator.")
-                }
-                viewModel.setAuthenticatedRole(appRole)
-                viewModel.setApiPermissions(
-                    capabilities,
-                    session.optJSONObject("features")
+                val cachedSession = apiClient.cachedSessionForCurrentTenant()
+                val cachedUserId = cachedSession?.optJSONObject("user")
+                    ?.optString("id")
+                    ?.takeIf(String::isNotBlank)
+                val localCacheUsable = viewModel.hasUsableOfflineCache()
+                val canStartOffline = OfflineStartupPolicy.canRestoreSession(
+                    hasCredentials = apiClient.hasSession,
+                    tenantConfigured = apiClient.tenantConfigured,
+                    cachedSessionMatchesTenant = cachedSession != null &&
+                        cachedUserId != null &&
+                        validatedSessionRole(cachedSession) != null,
+                    hasUsableCache = localCacheUsable,
+                    accessRestricted = apiClient.accessRestrictionCode != null,
+                    lastSuccessfulAuthenticationAt =
+                        apiClient.lastSuccessfulAuthenticationAt,
+                    lastSuccessfulSyncAt = apiClient.lastSuccessfulSyncAt,
+                    now = System.currentTimeMillis(),
+                    gracePeriodMillis = apiClient.offlineGracePeriodMillis
                 )
-                viewModel.setAuthenticatedUserId(user?.optString("id"))
+
+                if (canStartOffline) {
+                    viewModel.activateSession(
+                        checkNotNull(cachedSession),
+                        serverValidated = false
+                    )
+                    authenticated = true
+                    checkingSession = false
+                    viewModel.loadNotifications()
+                    viewModel.triggerSync()
+                    return@LaunchedEffect
+                }
+
+                val session = apiClient.get("auth/me/")
+                if (validatedSessionRole(session) == null) {
+                    throw IllegalStateException(
+                        "This account has no supported active staff role. Sign in again or contact the school administrator."
+                    )
+                }
+                viewModel.activateSession(session, serverValidated = true)
                 authenticated = true
+                startupMessage = null
                 viewModel.loadNotifications()
                 viewModel.triggerSync()
-            } catch (_: IOException) {
-                viewModel.clearSensitiveState()
-            } catch (_: IllegalStateException) {
-                viewModel.clearSensitiveState()
+            } catch (error: IOException) {
+                startupMessage = sessionValidationFailureMessage(apiClient, error)
+            } catch (error: IllegalStateException) {
+                startupMessage = sessionValidationFailureMessage(apiClient, error)
             }
         } else if (apiClient.hasSession) {
             viewModel.clearSensitiveState()
@@ -210,7 +377,29 @@ fun SHSAppRoot(viewModel: MainViewModel, apiClient: DjangoApiClient) {
         if (sessionExpired) {
             authenticated = false
             viewModel.navigateTo(AppScreen.DASHBOARD)
-            viewModel.clearSensitiveState()
+            viewModel.clearAuthenticatedUiState()
+            startupMessage =
+                "Your school sign-in has expired. Sign in again; cached school data has been retained."
+        }
+    }
+
+    LaunchedEffect(authenticated) {
+        while (authenticated) {
+            viewModel.refreshOutboxItems()
+            delay(10_000)
+        }
+    }
+
+    LaunchedEffect(authenticated, syncState.isOnline) {
+        if (authenticated && !syncState.isOnline) {
+            while (authenticated && !syncState.isOnline) {
+                if (!apiClient.hasUsableOfflineGrace()) {
+                    viewModel.restrictOfflineAccess()
+                    viewModel.navigateTo(AppScreen.DASHBOARD)
+                    break
+                }
+                delay(60_000)
+            }
         }
     }
 
@@ -228,6 +417,8 @@ fun SHSAppRoot(viewModel: MainViewModel, apiClient: DjangoApiClient) {
             AppScreen.OPERATIONS -> true
             AppScreen.ROLL_CALL -> permissions.rollCall
             AppScreen.EXEATS -> permissions.exeatsView
+            AppScreen.GATE_CHECK -> permissions.gateOperate
+            AppScreen.OUTBOX -> true
             AppScreen.REPORTS_SYNC ->
                 permissions.isAdmin || permissions.reports || permissions.auditView
             AppScreen.SMS_CAMPAIGNS -> permissions.smsDispatchEnabled
@@ -249,22 +440,22 @@ fun SHSAppRoot(viewModel: MainViewModel, apiClient: DjangoApiClient) {
                 Text("Checking school sign-in…", modifier = Modifier.padding(top = 12.dp))
             }
         } else {
-            ApiLoginScreen(apiClient = apiClient) { session ->
-                val appRole = validatedSessionRole(session)
-                if (appRole == null) {
+            ApiLoginScreen(apiClient = apiClient, statusMessage = startupMessage) { session ->
+                if (validatedSessionRole(session) == null) {
                     viewModel.clearSensitiveState()
                     return@ApiLoginScreen
                 }
-                authenticated = true
-                val user = session.optJSONObject("user")
-                viewModel.setAuthenticatedRole(appRole)
-                viewModel.setApiPermissions(
-                    user?.optJSONObject("capabilities"),
-                    session.optJSONObject("features")
-                )
-                viewModel.setAuthenticatedUserId(user?.optString("id"))
-                viewModel.loadNotifications()
-                viewModel.triggerSync()
+                scope.launch {
+                    try {
+                        viewModel.activateSession(session, serverValidated = true)
+                        startupMessage = null
+                        authenticated = true
+                        viewModel.loadNotifications()
+                        viewModel.triggerSync()
+                    } catch (error: IllegalStateException) {
+                        startupMessage = error.message
+                    }
+                }
             }
         }
         return
@@ -278,7 +469,11 @@ fun SHSAppRoot(viewModel: MainViewModel, apiClient: DjangoApiClient) {
                 currentRole = currentRole,
                 syncStatus = syncState.syncStatusMessage,
                 isOnline = syncState.isOnline,
+                lastSyncTime = syncState.lastSyncTime,
                 pendingOutboxCount = syncState.pendingOutboxCount,
+                failedOutboxCount = syncState.failedOutboxCount,
+                schoolName = apiClient.configuredSchoolName,
+                schoolLogoUrl = apiClient.configuredSchoolLogoUrl,
                 onSyncClick = {
                     if (permissions.isAdmin) viewModel.navigateTo(AppScreen.REPORTS_SYNC)
                 },
@@ -388,7 +583,10 @@ fun SHSAppRoot(viewModel: MainViewModel, apiClient: DjangoApiClient) {
                     Text("Your staff role does not have access to this page.")
                 } else {
                     when (screen) {
-                        AppScreen.DASHBOARD -> DashboardScreen(viewModel = viewModel)
+                        AppScreen.DASHBOARD -> DashboardScreen(
+                            viewModel = viewModel,
+                            apiClient = apiClient
+                        )
                         AppScreen.ROLL_CALL -> RollCallScreen(viewModel = viewModel)
                         AppScreen.EXEATS -> ExeatScreen(
                             viewModel = viewModel,
@@ -397,12 +595,18 @@ fun SHSAppRoot(viewModel: MainViewModel, apiClient: DjangoApiClient) {
                             canReview = permissions.exeatReview
                         )
                         AppScreen.GATE_CHECK -> GateCheckScreen(viewModel = viewModel)
-                        AppScreen.STUDENTS -> StudentDirectoryScreen(viewModel = viewModel)
+                        AppScreen.STUDENTS -> StudentDirectoryScreen(
+                            viewModel = viewModel,
+                            apiClient = apiClient,
+                            canManageStudents = permissions.studentsManage
+                        )
                         AppScreen.DORMS -> DormOccupancyScreen(
                             viewModel = viewModel,
                             canManageAllocations = permissions.studentsManage
                         )
                         AppScreen.OPERATIONS -> OperationsHubScreen(viewModel = viewModel)
+                        AppScreen.OUTBOX -> OutboxScreen(viewModel = viewModel)
+                        AppScreen.HELP -> HelpScreen(viewModel = viewModel)
                         AppScreen.ROLL_CALL_HISTORY -> RollCallHistoryScreen(viewModel = viewModel)
                         AppScreen.NOTIFICATIONS -> NotificationsScreen(viewModel = viewModel)
                         AppScreen.REPORTS_SYNC -> ReportsAuditScreen(
@@ -425,7 +629,29 @@ private fun validatedSessionRole(session: org.json.JSONObject): UserRole? {
     val capabilities = user.optJSONObject("capabilities") ?: return null
     if (!role.equals(capabilities.optString("role"), ignoreCase = true)) return null
     if (role.equals("ADMIN", ignoreCase = true) && !capabilities.optBoolean("is_admin")) return null
+    if (
+        role.uppercase() in setOf("HOUSEMASTER", "HOUSE_TUTOR") &&
+        capabilities.optString("house_id").let { it.isBlank() || it == "null" }
+    ) return null
     return userRoleFromServerRole(role)
+}
+
+private fun sessionValidationFailureMessage(
+    apiClient: DjangoApiClient,
+    error: Throwable
+): String = when (apiClient.classifySessionValidationFailure(error)) {
+    SessionValidationFailure.INVALID_CREDENTIALS ->
+        "Your school sign-in has expired. Sign in again; cached school data has been retained."
+    SessionValidationFailure.ACCESS_RESTRICTED ->
+        if (error is DjangoApiException) {
+            apiClient.accessRestrictionMessage(error.errorCode)
+        } else {
+            "The school server denied access. Connect to revalidate your account or contact the administrator. Cached data has been retained."
+        }
+    SessionValidationFailure.TRANSIENT ->
+        "Could not validate the saved sign-in. Connect to the school server and try again. Cached data has been retained."
+    SessionValidationFailure.UNEXPECTED ->
+        error.message ?: "Could not validate the saved school sign-in."
 }
 
 @Composable

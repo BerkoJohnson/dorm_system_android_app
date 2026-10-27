@@ -37,7 +37,7 @@ class DjangoDataSyncTest {
     }
 
     @Test
-    fun `student details map server identifiers guardian and QR token`() {
+    fun `student details map identifiers guardian placement medical details and photo`() {
         val student = dataSync.studentFrom(
             JSONObject(
                 """
@@ -51,8 +51,15 @@ class DjangoDataSyncTest {
                   "is_active_exeat": false,
                   "house": {"id": "house-1"},
                   "dormitory": {"id": "dorm-1"},
-                  "class_group": {"name": "SHS 2"},
-                  "guardian": {"full_name": "Guardian One", "phone_number": "0200000000"},
+                  "class_group": {"name": "SHS 2", "program": "General Science"},
+                  "room": {"id": "room-1", "name": "A1", "bed_number": 12},
+                  "guardian": {
+                    "full_name": "Guardian One",
+                    "phone_number": "0200000000",
+                    "relationship": "Mother"
+                  },
+                  "medical_notes": "Severe peanut allergy",
+                  "photo_url": "/media/students/student-1.jpg",
                   "public_token": "public-token-1"
                 }
                 """.trimIndent()
@@ -65,7 +72,64 @@ class DjangoDataSyncTest {
         assertEquals("dorm-1", student?.roomId)
         assertEquals("Guardian One", student?.guardianName)
         assertEquals("0200000000", student?.guardianPhone)
+        assertEquals("Mother", student?.guardianRelationship)
+        assertEquals("General Science", student?.program)
+        assertEquals(12, student?.bedNumber)
+        assertEquals("Severe peanut allergy", student?.emergencyNotes)
+        assertEquals(
+            "${DjangoApiClient(ApplicationProvider.getApplicationContext()).baseUrl.removeSuffix("/api/v1")}/media/students/student-1.jpg",
+            student?.photoUrl
+        )
         assertEquals("public-token-1", student?.qrCodeKey)
+    }
+
+    @Test
+    fun `student details preserve genuinely missing fields as unknown rather than blank`() {
+        val student = dataSync.studentFrom(
+            JSONObject("""{"id":"student-2","full_name":"B Student"}""")
+        )
+
+        assertEquals("", student?.program)
+        assertEquals("Unknown", student?.emergencyNotes)
+    }
+
+    @Test
+    fun `partial student sync response does not erase cached guardian and medical fields`() {
+        val cached = dataSync.studentFrom(
+            JSONObject(
+                """
+                {
+                  "id":"student-3",
+                  "full_name":"C Student",
+                  "program":"General Arts",
+                  "bed_number":8,
+                  "guardian_name":"Guardian Three",
+                  "guardian_phone":"0240000000",
+                  "guardian_relationship":"Father",
+                  "emergency_notes":"Asthma",
+                  "photo_url":"https://school.example/student.jpg"
+                }
+                """.trimIndent()
+            )
+        )!!
+        val listResponse = JSONObject(
+            """{"id":"student-3","full_name":"C Student","status":"ENROLLED"}"""
+        )
+        val mappedListResponse = dataSync.studentFrom(listResponse)!!
+
+        val merged = dataSync.preserveUnprovidedStudentDetails(
+            listResponse,
+            mappedListResponse,
+            cached
+        )
+
+        assertEquals("General Arts", merged.program)
+        assertEquals(8, merged.bedNumber)
+        assertEquals("Guardian Three", merged.guardianName)
+        assertEquals("0240000000", merged.guardianPhone)
+        assertEquals("Father", merged.guardianRelationship)
+        assertEquals("Asthma", merged.emergencyNotes)
+        assertEquals("https://school.example/student.jpg", merged.photoUrl)
     }
 
     @Test
