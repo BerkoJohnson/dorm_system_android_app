@@ -11,6 +11,7 @@ import com.example.data.model.ExeatRequest
 import com.example.data.model.GateMovement
 import com.example.data.model.House
 import com.example.data.model.HouseScopePolicy
+import com.example.data.model.IncidentRecord
 import com.example.data.model.MobileAuditEvent
 import com.example.data.model.MobileReport
 import com.example.data.model.MobileReportSection
@@ -59,6 +60,7 @@ enum class AppScreen {
     ROLL_CALL,
     EXEATS,
     GATE_CHECK,
+    INCIDENTS,
     OPERATIONS,
     STUDENTS,
     DORMS,
@@ -91,6 +93,22 @@ data class StudentRecordInput(
     val guardianPhone: String,
     val guardianRelationship: String,
     val emergencyNotes: String
+)
+
+data class IncidentReportInput(
+    val student: Student?,
+    /** Used when the incident is campus-wide and no student is attached. */
+    val houseId: String,
+    val category: String,
+    val severity: String,
+    val location: String,
+    val description: String,
+    val immediateAction: String,
+    val guardianContacted: Boolean,
+    val guardianContactPhone: String,
+    val guardianContactTime: String,
+    val medicalReferral: Boolean,
+    val actorName: String
 )
 
 data class DashboardMetrics(
@@ -219,6 +237,22 @@ class MainViewModel(
     val operationsMessage: StateFlow<String?> = _operationsMessage.asStateFlow()
     private val _studentRecordMessage = MutableStateFlow<String?>(null)
     val studentRecordMessage: StateFlow<String?> = _studentRecordMessage.asStateFlow()
+
+    val incidents: StateFlow<List<IncidentRecord>> = combine(
+        repository.allIncidents,
+        _currentRole,
+        _apiPermissions
+    ) { rows, role, permissions ->
+        if (!role.isHouseScoped) {
+            rows
+        } else {
+            val houseId = permissions.houseId?.takeIf(String::isNotBlank)
+                ?: return@combine emptyList()
+            // Blank-house incidents are campus-wide events; every house staff member needs
+            // to see those (drills, security alerts, power or water failures).
+            rows.filter { it.houseId == houseId || it.houseId.isBlank() }
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val houses: StateFlow<List<House>> = combine(
         repository.allHouses,
@@ -1449,8 +1483,117 @@ class MainViewModel(
         }
     }
 
-    fun rejectExeat(exeatId: String, approverName: String, reason: String) {
+    fun reportIncident(input: IncidentReportInput) {
         viewModelScope.launch {
+            val ownerId = currentUserId ?: run {
+                syncManager.reportActionError("Sign in before recording incidents.")
+                return@launch
+            }
+            val cleanDescription = input.description.trim()
+            val cleanPhone = input.guardianContactPhone.trim()
+            if (cleanDescription.isBlank()) {
+                syncManager.reportActionError("Describe what happened before saving an incident.")
+                return@launch
+            }
+            if (input.guardianContacted && cleanPhone.isBlank()) {
+                syncManager.reportActionError("Enter the guardian phone number that was contacted.")
+                return@launch
+            }
+            val incidentId = UUID.randomUUID().toString()
+            val record = IncidentRecord(
+                id = incidentId,
+                ownerId = ownerId,
+                tenantUrl = apiClient.baseUrl,
+                houseId = input.student?.houseId ?: input.houseId,
+                studentId = input.student?.id.orEmpty(),
+                studentName = input.student?.fullName ?: "Campus-wide event",
+                studentIndexNumber = input.student?.studentId.orEmpty(),
+                category = input.category,
+                severity = input.severity,
+                location = input.location.trim(),
+                description = cleanDescription,
+                immediateAction = input.immediateAction.trim(),
+                guardianContacted = input.guardianContacted,
+                guardianContactPhone = cleanPhone,
+                guardianContactTime = if (input.guardianContacted) {
+                    input.guardianContactTime.trim()
+                } else {
+                    ""
+                },
+                medicalReferral = input.medicalReferral,
+                reportedByName = input.actorName
+            )
+            // Local-first: an incident must be a durable record even with no connection.
+            repository.saveIncident(record)
+            repository.logAudit(
+                action = "INCIDENT_REPORTED",
+                actorRole = "House staff",
+                actorName = record.reportedByName,
+                details = "Reported ${record.severity.lowercase()} ${record.category.lowercase()} " +
+                    "incident for ${record.studentName} at " +
+                    record.location.ifBlank { "unrecorded location" } +
+                    " (guardian contacted: ${record.guardianContacted})."
+            )
+            remoteAction(
+                label = "Incident reported",
+                path = "incidents/",
+                payload = JSONObject()
+                    .put("incident_id", incidentId)
+                    .put("student_id", record.studentId)
+                    .put("house_id", record.houseId)
+                    .put("category", record.category)
+                    .put("severity", record.severity)
+                    .put("location", record.location)
+                    .put("description", record.description)
+                    .put("immediate_action", record.immediateAction)
+                    .put("guardian_contacted", record.guardianContacted)
+                    .put("guardian_contact_phone", record.guardianContactPhone)
+                    .put("guardian_contact_time", record.guardianContactTime)
+                    .put("medical_referral", record.medicalReferral)
+                    .put("reported_by", record.reportedByName)
+                    .put("reported_at", Instant.ofEpochMilli(record.createdAt).toString()),
+                idempotencyKey = incidentId,
+                onSuccess = {
+                    repository.updateIncidentSyncState(incidentId, "SYNCED")
+                },
+                onQueued = {
+                    repository.updateIncidentSyncState(incidentId, "QUEUED")
+                }
+            )
+        }
+    }
+
+    fun updateIncidentStatus(
+        incident: IncidentRecord,
+        status: String,
+        resolutionNotes: String,
+        actorName: String
+    ) {
+        viewModelScope.launch {
+            val cleanNotes = resolutionNotes.trim()
+            if (status == "CLOSED" && cleanNotes.isBlank()) {
+                syncManager.reportActionError("Record how the incident was resolved before closing it.")
+                return@launch
+            }
+            repository.updateIncidentStatus(incident.id, status, cleanNotes)
+            repository.logAudit(
+                action = "INCIDENT_UPDATED",
+                actorRole = "House staff",
+                actorName = actorName,
+                details = "Incident ${incident.id} marked $status for ${incident.studentName}."
+            )
+            remoteAction(
+                label = "Incident update saved",
+                path = "incidents/${incident.id}/status/",
+                payload = JSONObject()
+                    .put("status", status)
+                    .put("resolution_notes", cleanNotes),
+                idempotencyKey = UUID.randomUUID().toString()
+            )
+        }
+    }
+
+    fun rejectExeat(exeatId: String, approverName: String, reason: String) {        viewModelScope.launch {
             remoteAction(
                 label = "Exeat rejected",
                 path = "exeats/$exeatId/reject/",

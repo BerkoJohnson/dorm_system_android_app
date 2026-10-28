@@ -70,7 +70,10 @@ fun DormOccupancyScreen(
 ) {
     val houses by viewModel.houses.collectAsStateWithLifecycle()
     val rooms by viewModel.rooms.collectAsStateWithLifecycle()
-    val students by viewModel.students.collectAsStateWithLifecycle()
+    val allStudents by viewModel.students.collectAsStateWithLifecycle()
+    val students = viewModel.houseScopedStudents(allStudents)
+    val currentRole by viewModel.currentRole.collectAsStateWithLifecycle()
+    val permissions by viewModel.apiPermissions.collectAsStateWithLifecycle()
     val bedSpaces by viewModel.bedSpaces.collectAsStateWithLifecycle()
     var selectedStudent by remember { mutableStateOf<Student?>(null) }
     var selectedHouseFilter by remember { mutableStateOf("ALL") }
@@ -87,7 +90,17 @@ fun DormOccupancyScreen(
     val visibleHouses = houses.filter { house ->
         (selectedHouseFilter == "ALL" || house.id == selectedHouseFilter) &&
             (selectedDormitoryFilter == "ALL" ||
-                availableRooms.any { it.houseId == house.id && it.id == selectedDormitoryFilter })
+                availableRooms.any { it.houseId == house.id && it.id == selectedDormitoryFilter }) &&
+            (!currentRole.isHouseScoped || house.id == permissions.houseId)
+    }
+
+    // Boarders with no bed allocated anywhere. These students cannot be located by
+    // roll call or the gate, so surface them prominently, honouring the active filters.
+    val unassignedStudents = students.filter { student ->
+        student.roomId.isBlank() &&
+            student.assignedRoomId.isNullOrBlank() &&
+            (selectedHouseFilter == "ALL" || student.houseId == selectedHouseFilter) &&
+            (selectedClassFilter == "ALL" || student.classForm == selectedClassFilter)
     }
 
     LaunchedEffect(canManageAllocations) {
@@ -156,6 +169,17 @@ fun DormOccupancyScreen(
                             classForms.map { it to it },
                         modifier = Modifier.weight(1f),
                         onSelected = { selectedClassFilter = it }
+                    )
+                }
+            }
+
+            if (unassignedStudents.isNotEmpty()) {
+                item(key = "unassigned_students") {
+                    UnassignedStudentsCard(
+                        students = unassignedStudents,
+                        houses = houses,
+                        canManageAllocations = canManageAllocations,
+                        onAssign = { selectedStudent = it }
                     )
                 }
             }
@@ -237,6 +261,113 @@ private fun AllocationFilter(
                         expanded = false
                         onSelected(value)
                     }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun UnassignedStudentsCard(
+    students: List<Student>,
+    houses: List<House>,
+    canManageAllocations: Boolean,
+    onAssign: (Student) -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFFFFBEB)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Warning,
+                    contentDescription = null,
+                    tint = CrimsonAlert,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "STUDENTS WITHOUT A ROOM",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp,
+                    color = CrimsonAlert,
+                    modifier = Modifier.weight(1f)
+                )
+                Text(
+                    text = "${students.size} waiting",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = CrimsonAlert
+                )
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = if (canManageAllocations) {
+                    "Seat every boarder before evening roll call. Unassigned students cannot be checked in or located."
+                } else {
+                    "Report these boarders to the housemaster so they can be seated."
+                },
+                fontSize = 11.sp,
+                color = Color(0xFF92400E)
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                students.take(50).forEach { student ->
+                    val houseName = houses.firstOrNull { it.id == student.houseId }?.name
+                        .takeUnless { student.houseId.isBlank() }
+                        ?: "No house yet"
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color.White, RoundedCornerShape(8.dp))
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = student.fullName,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = NavyPrimary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = "${student.studentId} · ${student.classForm} · $houseName",
+                                fontSize = 10.sp,
+                                color = Color(0xFF64748B),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        if (canManageAllocations) {
+                            TextButton(onClick = { onAssign(student) }) {
+                                Text("Assign room")
+                            }
+                        } else {
+                            Text(
+                                text = "Awaiting allocation",
+                                fontSize = 10.sp,
+                                color = Color(0xFF92400E)
+                            )
+                        }
+                    }
+                }
+            }
+            if (students.size > 50) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "and ${students.size - 50} more — filter by house or form to work through them.",
+                    fontSize = 10.sp,
+                    color = Color(0xFF92400E)
                 )
             }
         }
@@ -442,15 +573,21 @@ private fun RoomAllocationDialog(
         onDismissRequest = onDismiss,
         title = { Text("Assign room to ${student.fullName}") },
         text = {
-            if (bedSpaces.isEmpty()) {
+            if (student.houseId.isBlank()) {
+                Text(
+                    "This boarder has not been assigned to a house yet. " +
+                        "Edit the student record to set their house first."
+                )
+            } else if (bedSpaces.isEmpty()) {
                 Text("No rooms are available for this dormitory.")
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     bedSpaces.forEach { bedSpace ->
                         val occupancy = students.count {
-                            it.assignedRoomId == bedSpace.id
+                            it.assignedRoomId == bedSpace.id || it.roomId == bedSpace.id
                         }
-                        val isCurrent = student.assignedRoomId == bedSpace.id
+                        val isCurrent =
+                            student.assignedRoomId == bedSpace.id || student.roomId == bedSpace.id
                         val isAvailable = occupancy < bedSpace.capacity || isCurrent
                         TextButton(
                             onClick = { onSelect(bedSpace) },

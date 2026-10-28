@@ -107,6 +107,10 @@ dependencies {
   // implementation(libs.androidx.navigation.compose)
   implementation(libs.androidx.room.ktx)
   implementation(libs.androidx.room.runtime)
+  // Kept explicit so the SQLCipher SupportOpenHelperFactory compiles against a known
+  // androidx.sqlite version instead of whatever Room transitively pulls.
+  implementation(libs.androidx.sqlite.framework)
+  implementation(libs.sqlcipher.android)
   implementation(libs.androidx.work.runtime.ktx)
   // implementation(libs.coil.compose)
   implementation(libs.converter.moshi)

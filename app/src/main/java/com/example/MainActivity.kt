@@ -9,6 +9,7 @@ import android.os.Build
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -38,6 +39,7 @@ import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.DropdownMenu
@@ -92,6 +94,7 @@ import com.example.ui.screens.DormOccupancyScreen
 import com.example.ui.screens.ExeatScreen
 import com.example.ui.screens.GateCheckScreen
 import com.example.ui.screens.HelpScreen
+import com.example.ui.screens.IncidentLogScreen
 import com.example.ui.screens.NotificationsScreen
 import com.example.ui.screens.OperationsHubScreen
 import com.example.ui.screens.OutboxScreen
@@ -116,6 +119,13 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Block screenshots and screen recording across the whole app: staff screens show
+        // student photos, guardian phone numbers and exeat destinations that must not end
+        // up in gallery screenshots or untrustworthy screen-sharing apps.
+        window.setFlags(
+            WindowManager.LayoutParams.FLAG_SECURE,
+            WindowManager.LayoutParams.FLAG_SECURE
+        )
         enableEdgeToEdge()
         SchoolNotificationCenter.createChannels(this)
         notificationIntent.value = intent.takeIf(::isNavigationIntent)
@@ -181,7 +191,6 @@ fun SHSAppRoot(
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { }
-    var moreMenuExpanded by remember { mutableStateOf(false) }
     var checkingSession by remember { mutableStateOf(true) }
     var authenticated by remember { mutableStateOf(false) }
     var startupMessage by remember { mutableStateOf<String?>(null) }
@@ -195,6 +204,9 @@ fun SHSAppRoot(
         }
         if (permissions.rollCall) {
             add(AppScreen.ROLL_CALL_HISTORY to ("Roll-call history" to Icons.Default.History))
+        }
+        if (permissions.studentsView) {
+            add(AppScreen.INCIDENTS to ("Incident log" to Icons.Default.Warning))
         }
         add(AppScreen.NOTIFICATIONS to ("Notifications" to Icons.Default.Notifications))
         if (permissions.isAdmin || permissions.reports || permissions.auditView) {
@@ -418,6 +430,7 @@ fun SHSAppRoot(
             AppScreen.ROLL_CALL -> permissions.rollCall
             AppScreen.EXEATS -> permissions.exeatsView
             AppScreen.GATE_CHECK -> permissions.gateOperate
+            AppScreen.INCIDENTS -> permissions.studentsView
             AppScreen.OUTBOX -> true
             AppScreen.REPORTS_SYNC ->
                 permissions.isAdmin || permissions.reports || permissions.auditView
@@ -575,6 +588,7 @@ fun SHSAppRoot(
                     AppScreen.OPERATIONS -> true
                     AppScreen.ROLL_CALL -> permissions.rollCall
                     AppScreen.EXEATS -> permissions.exeatsView
+                    AppScreen.INCIDENTS -> permissions.studentsView
                     AppScreen.REPORTS_SYNC ->
                         permissions.isAdmin || permissions.reports || permissions.auditView
                     else -> screen in moreScreens
@@ -590,11 +604,17 @@ fun SHSAppRoot(
                         AppScreen.ROLL_CALL -> RollCallScreen(viewModel = viewModel)
                         AppScreen.EXEATS -> ExeatScreen(
                             viewModel = viewModel,
+                            apiClient = apiClient,
                             canCreate = permissions.exeatsCreate,
                             canApprove = permissions.exeatsApprove,
                             canReview = permissions.exeatReview
                         )
                         AppScreen.GATE_CHECK -> GateCheckScreen(viewModel = viewModel)
+                        AppScreen.INCIDENTS -> IncidentLogScreen(
+                            viewModel = viewModel,
+                            canManage = permissions.studentsManage ||
+                                currentRole in setOf(UserRole.MATRON, UserRole.MEDICAL)
+                        )
                         AppScreen.STUDENTS -> StudentDirectoryScreen(
                             viewModel = viewModel,
                             apiClient = apiClient,

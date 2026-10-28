@@ -27,7 +27,7 @@ The Android application ID is `com.edencreativesys.edenest`. Keep it stable for 
 
 ## Data and privacy
 
-The app handles student identifiers, photos, house/bed assignment, guardian contact details, health notes, attendance, exeat and gate records, and staff audit information. Android cloud backup is disabled. Local Room data is not encrypted in this build; use managed, encrypted devices and screen locks, restrict access, and follow the school’s retention and lost-device procedures. See [Privacy notice](./PRIVACY_NOTICE.md).
+The app handles student identifiers, photos, house/bed assignment, guardian contact details, health notes, attendance, exeat and gate records, and staff audit information. Android cloud backup is disabled, and screenshots/screen-recording of the app are blocked. The local Room database is encrypted with SQLCipher; the database key is generated per installation and wrapped by the Android Keystore (see [Privacy notice](./PRIVACY_NOTICE.md)). If the Keystore is lost (factory reset restore or keystore corruption) the app rebuilds the cache from the school server, so deliver the outbox before resetting a device. Encryption on-device does not remove the need for managed devices, screen locks, restricted access, and the school's retention and lost-device procedures.
 
 ## Deployment checklist
 

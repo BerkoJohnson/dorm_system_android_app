@@ -23,6 +23,9 @@ import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.People
+import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.Sms
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -40,6 +43,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.ui.theme.CrimsonAlert
 import com.example.ui.theme.EdenBrightGreen
 import com.example.ui.theme.EdenDeepNavy
 import com.example.ui.theme.EdenElectricBlue
@@ -144,6 +148,28 @@ fun OperationsHubScreen(
             )
         }
 
+        if (permissions.gateOperate) item {
+            HubNavigationCard(
+                icon = Icons.Default.QrCodeScanner,
+                iconTint = EdenElectricBlue,
+                title = "Gate lookup",
+                subtitle = "Verify a student pass at the gate, with or without internet",
+                badge = "Gate",
+                onClick = { viewModel.navigateTo(AppScreen.GATE_CHECK) }
+            )
+        }
+
+        if (permissions.smsDispatchEnabled) item {
+            HubNavigationCard(
+                icon = Icons.Default.Sms,
+                iconTint = Color(0xFFD97706),
+                title = "SMS campaigns",
+                subtitle = "Compose and send guardian SMS campaigns",
+                badge = "SMS",
+                onClick = { viewModel.navigateTo(AppScreen.SMS_CAMPAIGNS) }
+            )
+        }
+
         // School notifications
         item {
             val count = notifications.size
@@ -154,6 +180,21 @@ fun OperationsHubScreen(
                 subtitle = "View alerts and mark them as read",
                 badge = if (count > 0) "$count Loaded" else "Alerts",
                 onClick = { viewModel.navigateTo(AppScreen.NOTIFICATIONS) }
+            )
+        }
+
+        if (permissions.studentsView) item {
+            val openIncidents = viewModel.incidents.collectAsStateWithLifecycle().value
+                .count { it.status == "OPEN" || it.status == "UNDER_REVIEW" }
+            HubNavigationCard(
+                icon = Icons.Default.Warning,
+                iconTint = CrimsonAlert,
+                title = "Incident & welfare log",
+                subtitle = "Injuries, illness, misconduct and welfare concerns",
+                badge = if (openIncidents > 0) "$openIncidents Open" else "Clear",
+                badgeColor = if (openIncidents > 0) Color(0xFFFEE2E2) else Color(0xFFDCFCE7),
+                badgeTextColor = if (openIncidents > 0) CrimsonAlert else EdenBrightGreen,
+                onClick = { viewModel.navigateTo(AppScreen.INCIDENTS) }
             )
         }
 

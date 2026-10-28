@@ -59,6 +59,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.ui.viewmodel.ExeatWorkflow
 import com.example.data.model.ExeatRequest
 import com.example.data.model.Student
+import com.example.data.remote.DjangoApiClient
+import com.example.ui.components.printExeatPass
 import com.example.ui.theme.AmberWarning
 import com.example.ui.theme.CrimsonAlert
 import com.example.ui.theme.EmeraldGreen
@@ -78,11 +80,13 @@ import java.time.format.DateTimeParseException
 @Composable
 fun ExeatScreen(
     viewModel: MainViewModel,
+    apiClient: DjangoApiClient,
     canCreate: Boolean,
     canApprove: Boolean,
     canReview: Boolean,
     modifier: Modifier = Modifier
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     val exeats by viewModel.exeats.collectAsStateWithLifecycle()
     val students by viewModel.students.collectAsStateWithLifecycle()
     val houses by viewModel.houses.collectAsStateWithLifecycle()
@@ -353,6 +357,10 @@ fun ExeatScreen(
             workflow = selectedExeatWorkflow,
             canApprove = canApprove,
             canReview = canReview,
+            houseName = houses.firstOrNull { it.id == selectedExeatForDetail?.houseId }?.name,
+            schoolName = apiClient.configuredSchoolName,
+            schoolAddress = apiClient.configuredSchoolAddress,
+            schoolPhone = apiClient.configuredSchoolPhone,
             onAction = { action ->
                 operation = action
                 operationReason = ""
@@ -754,9 +762,14 @@ private fun ExeatDetailDialog(
     workflow: ExeatWorkflow?,
     canApprove: Boolean,
     canReview: Boolean,
+    houseName: String?,
+    schoolName: String,
+    schoolAddress: String,
+    schoolPhone: String,
     onAction: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     val timeFormat = SimpleDateFormat("EEEE, dd MMM yyyy 'at' HH:mm", Locale.getDefault())
 
     AlertDialog(
@@ -785,6 +798,20 @@ private fun ExeatDetailDialog(
                 }
                 if (workflow?.isOverdue == true) {
                     Text("This pass is overdue.", fontSize = 11.sp, color = CrimsonAlert)
+                }
+                if (exeat.status in setOf("APPROVED", "DEPARTED")) {
+                    TextButton(onClick = {
+                        printExeatPass(
+                            context = context,
+                            exeat = exeat,
+                            houseName = houseName,
+                            schoolName = schoolName,
+                            schoolAddress = schoolAddress,
+                            schoolPhone = schoolPhone
+                        )
+                    }) {
+                        Text("Print pass", color = NavyPrimary)
+                    }
                 }
                 if (canApprove && exeat.status == "PENDING") {
                     if (exeat.category == "EMERGENCY") {

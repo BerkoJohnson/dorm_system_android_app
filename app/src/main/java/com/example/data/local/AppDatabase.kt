@@ -6,11 +6,14 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import net.zetetic.database.sqlcipher.SQLiteDatabase
+import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
 import com.example.data.model.AttendanceRecord
 import com.example.data.model.AuditLog
 import com.example.data.model.ExeatRequest
 import com.example.data.model.GateMovement
 import com.example.data.model.House
+import com.example.data.model.IncidentRecord
 import com.example.data.model.RoomEntity
 import com.example.data.model.RollCallOutboxItem
 import com.example.data.model.RemoteMutationOutboxItem
@@ -25,10 +28,11 @@ import com.example.data.model.Student
         AttendanceRecord::class,
         GateMovement::class,
         AuditLog::class,
+        IncidentRecord::class,
         RollCallOutboxItem::class,
         RemoteMutationOutboxItem::class
     ],
-    version = 9,
+    version = 10,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -39,6 +43,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun attendanceDao(): AttendanceDao
     abstract fun gateMovementDao(): GateMovementDao
     abstract fun auditDao(): AuditDao
+    abstract fun incidentDao(): IncidentDao
     abstract fun rollCallOutboxDao(): RollCallOutboxDao
     abstract fun remoteMutationOutboxDao(): RemoteMutationOutboxDao
 
@@ -148,16 +153,84 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS incident_records (
+                        id TEXT NOT NULL,
+                        ownerId TEXT NOT NULL,
+                        tenantUrl TEXT NOT NULL,
+                        houseId TEXT NOT NULL,
+                        studentId TEXT NOT NULL,
+                        studentName TEXT NOT NULL,
+                        studentIndexNumber TEXT NOT NULL,
+                        category TEXT NOT NULL,
+                        severity TEXT NOT NULL,
+                        location TEXT NOT NULL,
+                        description TEXT NOT NULL,
+                        immediateAction TEXT NOT NULL,
+                        guardianContacted INTEGER NOT NULL,
+                        guardianContactPhone TEXT NOT NULL,
+                        guardianContactTime TEXT NOT NULL,
+                        medicalReferral INTEGER NOT NULL,
+                        status TEXT NOT NULL,
+                        resolutionNotes TEXT NOT NULL,
+                        reportedByName TEXT NOT NULL,
+                        createdAt INTEGER NOT NULL,
+                        syncStatus TEXT NOT NULL,
+                        syncError TEXT,
+                        PRIMARY KEY(id)
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
+        private const val LEGACY_PLAINTEXT_DB = "shs_boarding_database"
+        private const val SECURE_DB = "shs_boarding_secure"
+
+        @Volatile
+        private var sqlCipherLibraryLoaded = false
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
+                val appContext = context.applicationContext
+                val secureFile = appContext.getDatabasePath(SECURE_DB)
+                val legacyFile = appContext.getDatabasePath(LEGACY_PLAINTEXT_DB)
+                val keyResult = DatabaseKeyManager.getOrCreatePassphrase(appContext)
+                if (keyResult.regenerated) {
+                    // The keystore lost its master key, so the previous encrypted file can
+                    // never be opened again. Start fresh instead of crashing on first query.
+                    SQLiteDatabase.deleteDatabase(secureFile)
+                }
+                loadSqlCipherLibrary()
+                when {
+                    !secureFile.exists() ->
+                        PlaintextDatabaseMigrator.migrateIfNeeded(
+                            appContext,
+                            SECURE_DB,
+                            LEGACY_PLAINTEXT_DB,
+                            keyResult.passphrase
+                        )
+                    legacyFile.exists() ->
+                        // A previous migration completed but left plaintext sidecars
+                        // behind; remove them now.
+                        PlaintextDatabaseMigrator.legacyFiles(
+                            appContext,
+                            LEGACY_PLAINTEXT_DB
+                        ).forEach { it.delete() }
+                }
+
                 val instance = Room.databaseBuilder(
-                    context.applicationContext,
+                    appContext,
                     AppDatabase::class.java,
-                    "shs_boarding_database"
+                    SECURE_DB
                 )
+                    .openHelperFactory(SupportOpenHelperFactory(keyResult.passphrase))
                     .addMigrations(MIGRATION_1_2)
                     .addMigrations(MIGRATION_2_3)
                     .addMigrations(MIGRATION_3_4)
@@ -166,10 +239,22 @@ abstract class AppDatabase : RoomDatabase() {
                     .addMigrations(MIGRATION_6_7)
                     .addMigrations(MIGRATION_7_8)
                     .addMigrations(MIGRATION_8_9)
+                    .addMigrations(MIGRATION_9_10)
                     .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance
                 instance
+            }
+        }
+
+        private fun loadSqlCipherLibrary() {
+            if (sqlCipherLibraryLoaded) return
+            synchronized(this) {
+                if (!sqlCipherLibraryLoaded) {
+                    // Must run before any net.zetetic.database call in the process.
+                    System.loadLibrary("sqlcipher")
+                    sqlCipherLibraryLoaded = true
+                }
             }
         }
     }

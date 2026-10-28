@@ -11,7 +11,17 @@ The Android client implements best-effort local behavior where possible. These s
 
 ## Exeats, handover, and notifications
 
-- Derive the actor from authenticated server identity; accept local actor labels only as display hints, never as authorization evidence.
+- Derive the actor from authenticated server identity; accept local actor labels only as display hints, never as authorization evidence. The auth/me/ payload must enforce house-level authorization for incident and welfare records.
+
+## Incident and welfare records (new client module)
+
+The Android client now records incidents locally and delivers them through the outbox with `idempotency_key`. The server must implement:
+
+- `POST incidents/` accepting: `incident_id` (client UUID, idempotency key), `student_id` (may be blank for campus-wide events), `house_id`, `category` (`INJURY`, `ILLNESS`, `MISCONDUCT`, `BULLYING`, `PROPERTY`, `SECURITY`, `OTHER`), `severity` (`LOW`, `MEDIUM`, `HIGH`, `CRITICAL`), `location`, `description`, `immediate_action`, `guardian_contacted`, `guardian_contact_phone`, `guardian_contact_time`, `medical_referral`, `reported_by`, `reported_at` (ISO-8601).
+- `POST incidents/{incident_id}/status/` accepting `status` (`UNDER_REVIEW`, `CLOSED`) and `resolution_notes`; closing must require non-empty notes or reject with a stable validation error code.
+- Return the stored record server-side with an authoritative `id` so registrations from multiple devices converge.
+- Enforce authorization on the server: house-scoped staff may only read/write incidents within their house; read-only headmaster accounts must be refused for writes. The client-side `students_view`/`students_manage` gating is display logic only.
+- Deleting or rewriting an incident record must be prohibited and must produce an audit event when staff corrections are required.
 - Provide role/house-aware notification events for pending exeats, overdue returns, incidents, unmarked roll calls, and rejected queued work.
 - For seconds-fast delivery, provide FCM project credentials/configuration, a device token registration/revocation endpoint scoped to user and tenant, and server-side event publishing. The current Android WorkManager poll cannot meet that latency.
 - Include notification `id`, category/kind, title, safe preview text, record type/id, creation time, read state, and pagination cursor. Define whether read state is per-user.

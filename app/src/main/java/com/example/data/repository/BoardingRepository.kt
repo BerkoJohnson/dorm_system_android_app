@@ -7,6 +7,7 @@ import com.example.data.model.AuditLog
 import com.example.data.model.ExeatRequest
 import com.example.data.model.GateMovement
 import com.example.data.model.House
+import com.example.data.model.IncidentRecord
 import com.example.data.model.RemoteMutationOutboxItem
 import com.example.data.model.RoomEntity
 import com.example.data.model.Student
@@ -51,6 +52,7 @@ class BoardingRepository(private val db: AppDatabase) {
     val allStudents: Flow<List<Student>> = db.studentDao().getAllStudents()
     val allExeats: Flow<List<ExeatRequest>> = db.exeatDao().getAllExeats()
     val allMovements: Flow<List<GateMovement>> = db.gateMovementDao().getAllMovements()
+    val allIncidents: Flow<List<IncidentRecord>> = db.incidentDao().getAllIncidents()
 
     fun setAuditScope(ownerId: String, tenantUrl: String) {
         auditOwnerId = ownerId.takeIf(String::isNotBlank).orEmpty()
@@ -68,6 +70,7 @@ class BoardingRepository(private val db: AppDatabase) {
             db.exeatDao().clear()
             db.attendanceDao().clear()
             db.gateMovementDao().clear()
+            db.incidentDao().clear()
         }
     }
 
@@ -93,6 +96,21 @@ class BoardingRepository(private val db: AppDatabase) {
     suspend fun updateGateMovementSyncState(id: String, status: String, error: String? = null) {
         db.gateMovementDao().updateSyncState(id, status, error)
     }
+
+    suspend fun saveIncident(incident: IncidentRecord): IncidentRecord {
+        db.incidentDao().upsert(incident)
+        return incident
+    }
+
+    suspend fun updateIncidentStatus(id: String, status: String, resolutionNotes: String) {
+        db.incidentDao().updateStatus(id, status, resolutionNotes)
+    }
+
+    suspend fun updateIncidentSyncState(id: String, status: String, error: String? = null) {
+        db.incidentDao().updateSyncState(id, status, error)
+    }
+
+    suspend fun getIncidentById(id: String): IncidentRecord? = db.incidentDao().getById(id)
 
     fun getRoomsByHouse(houseId: String): Flow<List<RoomEntity>> =
         db.roomDao().getRoomsByHouse(houseId)
